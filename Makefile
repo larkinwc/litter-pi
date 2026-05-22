@@ -445,11 +445,13 @@ rust-ios-macabi-fast: alleycat-main $(STAMP_SYNC) $(STAMP_GHOSTTY_IOS)
 
 rust-check: alleycat-main
 	@echo "==> cargo check (host, shared crates)..."
-	@cd $(ROOT) && $(DEV_CARGO_ENV) cargo check --manifest-path $(RUST_DIR)/Cargo.toml -p codex-mobile-client
+	@cd $(ROOT) && $(DEV_CARGO_ENV) cargo check --manifest-path $(RUST_DIR)/Cargo.toml -p codex-mobile-client -p pi-mobile-client
+	@cd $(ROOT) && $(DEV_CARGO_ENV) cargo check -p pi-server-runner
 
 rust-test: alleycat-main rust-shellcheck
 	@echo "==> cargo test (host, shared crates)..."
-	@cd $(ROOT) && $(DEV_CARGO_ENV) cargo test --manifest-path $(RUST_DIR)/Cargo.toml -p codex-mobile-client --lib
+	@cd $(ROOT) && $(DEV_CARGO_ENV) cargo test --manifest-path $(RUST_DIR)/Cargo.toml -p codex-mobile-client --lib -p pi-mobile-client
+	@cd $(ROOT) && $(DEV_CARGO_ENV) cargo test -p pi-server-runner
 
 # Lint the embedded SSH bootstrap shell scripts. shellcheck and pwsh are
 # best-effort: missing tools warn but don't fail the build (matches the

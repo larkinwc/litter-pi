@@ -1,0 +1,11 @@
+[workspace]
+# Top-level virtual workspace for crates that live outside `shared/rust-bridge/`
+# and outside the self-contained `services/kittylitter` workspace.
+#
+# `services/kittylitter` declares its own `[workspace]` and stays isolated.
+# `shared/rust-bridge/` is its own workspace; its members continue to walk up
+# to that manifest, not this one.
+resolver = "3"
+members = [
+    "services/pi-server-runner",
+]

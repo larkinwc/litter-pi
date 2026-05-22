@@ -1,0 +1,13 @@
+[package]
+name = "pi-server-runner"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Headless host runner for exercising the in-process pi coding agent runtime."
+
+[[bin]]
+name = "pi-server-runner"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
