@@ -213,8 +213,13 @@ export MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET"
 # bindgen 0.70 maps `aarch64-apple-ios-sim` -> `arm64-apple-ios-sim`, which
 # clang rejects ("version 'sim' in target triple ... is invalid"). The correct
 # clang triple uses the `-simulator` environment suffix. Override per-target so
-# bindgen-driven build scripts (e.g. ish-embed-host) point at the iPhoneSimulator
-# SDK when cross-compiling for the simulator.
+# bindgen-driven build scripts (e.g. ish-embed-host, rquickjs-sys) point at the
+# matching iPhoneOS/iPhoneSimulator SDK when cross-compiling. Both variants
+# include the SDK sysroot so bindgen can resolve standard C headers.
+IPHONEOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path 2>/dev/null || true)"
+if [ -n "$IPHONEOS_SDK" ]; then
+  export BINDGEN_EXTRA_CLANG_ARGS_aarch64_apple_ios="--target=arm64-apple-ios${IOS_DEPLOYMENT_TARGET} -isysroot ${IPHONEOS_SDK}"
+fi
 IPHONESIM_SDK="$(xcrun --sdk iphonesimulator --show-sdk-path 2>/dev/null || true)"
 if [ -n "$IPHONESIM_SDK" ]; then
   export BINDGEN_EXTRA_CLANG_ARGS_aarch64_apple_ios_sim="--target=arm64-apple-ios${IOS_DEPLOYMENT_TARGET}-simulator -isysroot ${IPHONESIM_SDK}"

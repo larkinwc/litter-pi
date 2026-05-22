@@ -6,6 +6,7 @@ publish = false
 
 [lib]
 path = "src/lib.rs"
+crate-type = ["lib", "staticlib", "cdylib"]
 
 [dependencies]
 pi_agent_rust = { path = "../../third_party/pi_agent_rust", default-features = false, features = ["js-extensions"] }
