@@ -14,3 +14,5 @@ asupersync = { version = "=0.3.2", default-features = false, features = ["tls-na
 tokio = { workspace = true }
 futures = { workspace = true }
 tracing = { workspace = true }
+async-trait = { workspace = true }
+serde_json = { workspace = true }

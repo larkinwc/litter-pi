@@ -11366,8 +11366,10 @@ name = "pi-mobile-client"
 version = "0.1.0"
 dependencies = [
  "asupersync",
+ "async-trait",
  "futures",
  "pi_agent_rust",
+ "serde_json",
  "tokio",
  "tracing",
 ]
