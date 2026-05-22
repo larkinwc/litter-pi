@@ -6,3 +6,7 @@
 	path = shared/third_party/ghostty
 	url = https://github.com/ghostty-org/ghostty.git
 	shallow = true
+[submodule "shared/third_party/pi_agent_rust"]
+	path = shared/third_party/pi_agent_rust
+	url = https://github.com/larkinwc/pi_agent_rust.git
+	branch = mission/ios-bindgen-gate
