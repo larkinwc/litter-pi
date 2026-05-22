@@ -16,8 +16,8 @@ path = "src/export_fixture.rs"
 codex-mobile-client = { path = "../codex-mobile-client" }
 codex-app-server-protocol = { path = "../../third_party/codex/codex-rs/app-server-protocol" }
 tokio = { workspace = true }
-crossterm = { version = "0.28", features = ["event-stream"] }
-ratatui = { version = "0.29", features = ["crossterm"] }
+crossterm = { version = "0.29", features = ["event-stream"] }
+ratatui = { version = "0.30", features = ["crossterm"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
