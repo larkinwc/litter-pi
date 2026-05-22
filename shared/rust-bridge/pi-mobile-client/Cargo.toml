@@ -10,3 +10,7 @@ crate-type = ["lib", "staticlib", "cdylib"]
 
 [dependencies]
 pi_agent_rust = { path = "../../third_party/pi_agent_rust", default-features = false, features = ["js-extensions"] }
+asupersync = { version = "=0.3.2", default-features = false, features = ["tls-native-roots", "test-internals"] }
+tokio = { workspace = true }
+futures = { workspace = true }
+tracing = { workspace = true }

@@ -11365,7 +11365,11 @@ dependencies = [
 name = "pi-mobile-client"
 version = "0.1.0"
 dependencies = [
+ "asupersync",
+ "futures",
  "pi_agent_rust",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
