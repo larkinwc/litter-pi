@@ -1,0 +1,604 @@
+diff --git a/codex-rs/Cargo.toml b/codex-rs/Cargo.toml
+index 5e0b16c4c..14f0d5ef4 100644
+--- a/codex-rs/Cargo.toml
++++ b/codex-rs/Cargo.toml
+@@ -242,7 +242,7 @@ mcp_test_support = { path = "mcp-server/tests/common" }
+ # External
+ age = "0.11.1"
+ allocative = "0.3.3"
+-ansi-to-tui = "7.0.0"
++ansi-to-tui = "8.0.1"
+ anyhow = "1"
+ arboard = { version = "3", features = ["wayland-data-control"] }
+ arc-swap = "1.9.0"
+@@ -268,7 +268,7 @@ color-eyre = "0.6.3"
+ constant_time_eq = "0.3.1"
+ crossbeam-channel = "0.5.15"
+ crypto_box = { version = "0.9.1", features = ["seal"] }
+-crossterm = "0.28.1"
++crossterm = "0.29.0"
+ csv = "1.3.1"
+ ctor = "0.6.3"
+ deno_core_icudata = "0.77.0"
+@@ -330,8 +330,8 @@ pretty_assertions = "1.4.1"
+ pulldown-cmark = "0.10"
+ quick-xml = "0.38.4"
+ rand = "0.9"
+-ratatui = "0.29.0"
+-ratatui-macros = "0.6.0"
++ratatui = "0.30.0"
++ratatui-macros = "0.7.0"
+ rcgen = { version = "0.14.7", default-features = false, features = [
+     "aws_lc_rs",
+     "pem",
+@@ -514,8 +514,6 @@ opt-level = 0
+ [patch.crates-io]
+ # Uncomment to debug local changes.
+ # ratatui = { path = "../../ratatui" }
+-crossterm = { git = "https://github.com/nornagon/crossterm", rev = "87db8bfa6dc99427fd3b071681b07fc31c6ce995" }
+-ratatui = { git = "https://github.com/nornagon/ratatui", rev = "9b2ad1298408c45918ee9f8241a6f95498cdbed2" }
+ tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "132f5b39c862e3a970f731d709608b3e6276d5f6" }
+ tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "9200079d3b54a1ff51072e24d81fd354f085156f" }
+ 
+diff --git a/codex-rs/tui/src/app/app_server_event_targets.rs b/codex-rs/tui/src/app/app_server_event_targets.rs
+index d535bf8e3..26de64812 100644
+--- a/codex-rs/tui/src/app/app_server_event_targets.rs
++++ b/codex-rs/tui/src/app/app_server_event_targets.rs
+@@ -111,6 +111,9 @@ pub(super) fn server_notification_thread_target(
+             Some(notification.thread_id.as_str())
+         }
+         ServerNotification::ContextCompacted(notification) => Some(notification.thread_id.as_str()),
++        ServerNotification::DynamicToolCallArgumentsDelta(notification) => {
++            Some(notification.thread_id.as_str())
++        }
+         ServerNotification::ModelRerouted(notification) => Some(notification.thread_id.as_str()),
+         ServerNotification::ModelVerification(notification) => {
+             Some(notification.thread_id.as_str())
+diff --git a/codex-rs/tui/src/app/session_lifecycle.rs b/codex-rs/tui/src/app/session_lifecycle.rs
+index 1a57b596b..e910d17cf 100644
+--- a/codex-rs/tui/src/app/session_lifecycle.rs
++++ b/codex-rs/tui/src/app/session_lifecycle.rs
+@@ -395,7 +395,7 @@ impl App {
+         terminal: &mut crate::custom_terminal::Terminal<B>,
+     ) -> Result<()>
+     where
+-        B: Backend + Write,
++        B: Backend<Error = std::io::Error> + Write,
+     {
+         terminal.clear_scrollback_and_visible_screen_ansi()?;
+         let mut area = terminal.viewport_area;
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
+index 2176e7762..577e3690f 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
+@@ -154,6 +154,7 @@ use ratatui::text::Span;
+ use ratatui::widgets::Block;
+ use ratatui::widgets::Paragraph;
+ use ratatui::widgets::StatefulWidgetRef;
++use ratatui::widgets::Widget;
+ use ratatui::widgets::WidgetRef;
+ 
+ use super::chat_composer_history::ChatComposerHistory;
+@@ -4579,7 +4580,7 @@ impl ChatComposer {
+                         }
+                     } else if self.footer.flash_visible() {
+                         if let Some(flash) = self.footer.flash.as_ref() {
+-                            flash.line.render(inset_footer_hint_area(hint_rect), buf);
++                            flash.line.clone().render(inset_footer_hint_area(hint_rect), buf);
+                         }
+                     } else if let Some(items) = active_footer_hint_override {
+                         render_footer_hint_items(hint_rect, buf, items);
+@@ -4610,11 +4611,11 @@ impl ChatComposer {
+             }
+         }
+         let style = user_message_style();
+-        Block::default().style(style).render_ref(composer_rect, buf);
++        Block::default().style(style).render(composer_rect, buf);
+         if !remote_images_rect.is_empty() {
+             Paragraph::new(self.attachments.remote_image_lines())
+                 .style(style)
+-                .render_ref(remote_images_rect, buf);
++                .render(remote_images_rect, buf);
+         }
+         if !textarea_rect.is_empty() {
+             let prompt = if self.draft.input_enabled {
+@@ -4680,7 +4681,7 @@ impl ChatComposer {
+             if !textarea_rect.is_empty() {
+                 let placeholder = Span::from(text).dim();
+                 Line::from(vec![placeholder])
+-                    .render_ref(textarea_rect.inner(Margin::new(0, 0)), buf);
++                    .render(textarea_rect.inner(Margin::new(0, 0)), buf);
+             }
+         }
+     }
+diff --git a/codex-rs/tui/src/chatwidget/plugins.rs b/codex-rs/tui/src/chatwidget/plugins.rs
+index 746f42fce..1d3acbde7 100644
+--- a/codex-rs/tui/src/chatwidget/plugins.rs
++++ b/codex-rs/tui/src/chatwidget/plugins.rs
+@@ -127,7 +127,7 @@ impl Renderable for DelayedLoadingHeader {
+             lines.push(Line::from(note.as_str().dim()));
+         }
+ 
+-        Paragraph::new(lines).render_ref(area, buf);
++        Paragraph::new(lines).render(area, buf);
+     }
+ 
+     fn desired_height(&self, _width: u16) -> u16 {
+diff --git a/codex-rs/tui/src/chatwidget/protocol.rs b/codex-rs/tui/src/chatwidget/protocol.rs
+index f0e3efea0..1d1bccf0c 100644
+--- a/codex-rs/tui/src/chatwidget/protocol.rs
++++ b/codex-rs/tui/src/chatwidget/protocol.rs
+@@ -238,6 +238,7 @@ impl ChatWidget {
+             | ServerNotification::WindowsSandboxSetupCompleted(_)
+             | ServerNotification::AccountLoginCompleted(_) => {}
+             ServerNotification::ContextCompacted(_) => {}
++            ServerNotification::DynamicToolCallArgumentsDelta(_) => {}
+         }
+     }
+ 
+diff --git a/codex-rs/tui/src/custom_terminal.rs b/codex-rs/tui/src/custom_terminal.rs
+index 995a0358f..05334c90b 100644
+--- a/codex-rs/tui/src/custom_terminal.rs
++++ b/codex-rs/tui/src/custom_terminal.rs
+@@ -36,6 +36,7 @@ use crossterm::style::SetForegroundColor;
+ use crossterm::terminal::Clear;
+ use derive_more::IsVariant;
+ use ratatui::backend::Backend;
++use ratatui::backend::IntoCrossterm;
+ use ratatui::backend::ClearType;
+ use ratatui::buffer::Buffer;
+ use ratatui::layout::Position;
+@@ -43,6 +44,7 @@ use ratatui::layout::Rect;
+ use ratatui::layout::Size;
+ use ratatui::style::Color;
+ use ratatui::style::Modifier;
++use ratatui::widgets::Widget;
+ use ratatui::widgets::WidgetRef;
+ use unicode_width::UnicodeWidthStr;
+ 
+@@ -113,6 +115,7 @@ impl Frame<'_> {
+     /// Usually the area argument is the size of the current frame or a sub-area of the current
+     /// frame (which can be obtained using [`Layout`] to split the total area).
+     #[allow(clippy::needless_pass_by_value)]
++    #[allow(clippy::needless_pass_by_value)]
+     pub fn render_widget_ref<W: WidgetRef>(&mut self, widget: W, area: Rect) {
+         widget.render_ref(area, self.buffer);
+     }
+@@ -145,7 +148,7 @@ impl Frame<'_> {
+ #[derive(Debug, Default, Clone, Eq, PartialEq, Hash)]
+ pub struct Terminal<B>
+ where
+-    B: Backend + Write,
++    B: Backend<Error = io::Error> + Write,
+ {
+     /// The backend used to interface with the terminal
+     backend: B,
+@@ -169,7 +172,7 @@ where
+ 
+ impl<B> Drop for Terminal<B>
+ where
+-    B: Backend,
++    B: Backend<Error = io::Error>,
+     B: Write,
+ {
+     #[allow(clippy::print_stderr)]
+@@ -189,7 +192,7 @@ where
+ 
+ impl<B> Terminal<B>
+ where
+-    B: Backend,
++    B: Backend<Error = io::Error>,
+     B: Write,
+ {
+     /// Creates a new [`Terminal`] with the given [`Backend`] and [`TerminalOptions`].
+@@ -669,7 +672,10 @@ where
+                 if cell.fg != fg || cell.bg != bg {
+                     queue!(
+                         writer,
+-                        SetColors(Colors::new(cell.fg.into(), cell.bg.into()))
++                        SetColors(Colors::new(
++                            cell.fg.into_crossterm(),
++                            cell.bg.into_crossterm()
++                        ))
+                     )?;
+                     fg = cell.fg;
+                     bg = cell.bg;
+@@ -680,7 +686,7 @@ where
+             DrawCommand::ClearToEnd { bg: clear_bg, .. } => {
+                 queue!(writer, SetAttribute(crossterm::style::Attribute::Reset))?;
+                 modifier = Modifier::empty();
+-                queue!(writer, SetBackgroundColor(clear_bg.into()))?;
++                queue!(writer, SetBackgroundColor(clear_bg.into_crossterm()))?;
+                 bg = clear_bg;
+                 queue!(writer, Clear(crossterm::terminal::ClearType::UntilNewLine))?;
+             }
+diff --git a/codex-rs/tui/src/diff_render.rs b/codex-rs/tui/src/diff_render.rs
+index 350c3c7aa..f98f9e77e 100644
+--- a/codex-rs/tui/src/diff_render.rs
++++ b/codex-rs/tui/src/diff_render.rs
+@@ -1313,6 +1313,7 @@ mod tests {
+     use ratatui::backend::TestBackend;
+     use ratatui::text::Text;
+     use ratatui::widgets::Paragraph;
++    use ratatui::widgets::Widget;
+     use ratatui::widgets::WidgetRef;
+     use ratatui::widgets::Wrap;
+ 
+@@ -1366,7 +1367,7 @@ mod tests {
+             .draw(|f| {
+                 Paragraph::new(Text::from(lines))
+                     .wrap(Wrap { trim: false })
+-                    .render_ref(f.area(), f.buffer_mut())
++                    .render(f.area(), f.buffer_mut())
+             })
+             .expect("draw");
+         assert_snapshot!(name, terminal.backend());
+diff --git a/codex-rs/tui/src/insert_history.rs b/codex-rs/tui/src/insert_history.rs
+index f2c64a109..82786d086 100644
+--- a/codex-rs/tui/src/insert_history.rs
++++ b/codex-rs/tui/src/insert_history.rs
+@@ -29,6 +29,7 @@ use crossterm::terminal::Clear;
+ use crossterm::terminal::ClearType;
+ use ratatui::layout::Size;
+ use ratatui::prelude::Backend;
++use ratatui::backend::IntoCrossterm;
+ use ratatui::style::Color;
+ use ratatui::style::Modifier;
+ use ratatui::text::Line;
+@@ -47,7 +48,7 @@ pub fn insert_history_lines<B>(
+     lines: Vec<Line>,
+ ) -> io::Result<()>
+ where
+-    B: Backend + Write,
++    B: Backend<Error = io::Error> + Write,
+ {
+     insert_history_lines_with_wrap_policy(terminal, lines, HistoryLineWrapPolicy::PreWrap)
+ }
+@@ -58,7 +59,7 @@ pub fn insert_history_lines_with_wrap_policy<B>(
+     wrap_policy: HistoryLineWrapPolicy,
+ ) -> io::Result<()>
+ where
+-    B: Backend + Write,
++    B: Backend<Error = io::Error> + Write,
+ {
+     let screen_size = terminal.backend().size().unwrap_or(Size::new(0, 0));
+ 
+@@ -205,11 +206,11 @@ fn write_history_line<W: Write>(writer: &mut W, line: &Line, wrap_width: usize)
+         SetColors(Colors::new(
+             line.style
+                 .fg
+-                .map(std::convert::Into::into)
++                .map(IntoCrossterm::into_crossterm)
+                 .unwrap_or(CColor::Reset),
+             line.style
+                 .bg
+-                .map(std::convert::Into::into)
++                .map(IntoCrossterm::into_crossterm)
+                 .unwrap_or(CColor::Reset)
+         ))
+     )?;
+@@ -358,7 +359,10 @@ where
+         if next_fg != fg || next_bg != bg {
+             queue!(
+                 writer,
+-                SetColors(Colors::new(next_fg.into(), next_bg.into()))
++                SetColors(Colors::new(
++                    next_fg.into_crossterm(),
++                    next_bg.into_crossterm()
++                ))
+             )?;
+             fg = next_fg;
+             bg = next_bg;
+diff --git a/codex-rs/tui/src/pager_overlay.rs b/codex-rs/tui/src/pager_overlay.rs
+index c301700ea..b5c8cac1e 100644
+--- a/codex-rs/tui/src/pager_overlay.rs
++++ b/codex-rs/tui/src/pager_overlay.rs
+@@ -110,7 +110,7 @@ fn render_key_hints(area: Rect, buf: &mut Buffer, pairs: &[(Vec<KeyBinding>, &st
+         spans.push(Span::from(desc.to_string()));
+         first = false;
+     }
+-    Paragraph::new(vec![Line::from(spans).dim()]).render_ref(area, buf);
++    Paragraph::new(vec![Line::from(spans).dim()]).render(area, buf);
+ }
+ 
+ /// Generic widget for rendering a pager view.
+@@ -174,9 +174,9 @@ impl PagerView {
+     fn render_header(&self, area: Rect, buf: &mut Buffer) {
+         Span::from("/ ".repeat(area.width as usize / 2))
+             .dim()
+-            .render_ref(area, buf);
++            .render(area, buf);
+         let header = format!("/ {}", self.title);
+-        header.dim().render_ref(area, buf);
++        header.dim().render(area, buf);
+     }
+ 
+     fn render_content(&self, area: Rect, buf: &mut Buffer) {
+@@ -227,7 +227,7 @@ impl PagerView {
+ 
+         Span::from("─".repeat(sep_rect.width as usize))
+             .dim()
+-            .render_ref(sep_rect, buf);
++            .render(sep_rect, buf);
+         let percent = if total_len == 0 {
+             100
+         } else {
+@@ -244,7 +244,7 @@ impl PagerView {
+         let pct_x = sep_rect.x + sep_rect.width - pct_w - 1;
+         Span::from(pct_text)
+             .dim()
+-            .render_ref(Rect::new(pct_x, sep_rect.y, pct_w, 1), buf);
++            .render(Rect::new(pct_x, sep_rect.y, pct_w, 1), buf);
+     }
+ 
+     fn handle_key_event(&mut self, tui: &mut tui::Tui, key_event: KeyEvent) -> Result<()> {
+diff --git a/codex-rs/tui/src/render/renderable.rs b/codex-rs/tui/src/render/renderable.rs
+index 6455b0f78..76aaee533 100644
+--- a/codex-rs/tui/src/render/renderable.rs
++++ b/codex-rs/tui/src/render/renderable.rs
+@@ -6,6 +6,7 @@ use ratatui::layout::Rect;
+ use ratatui::text::Line;
+ use ratatui::text::Span;
+ use ratatui::widgets::Paragraph;
++use ratatui::widgets::Widget;
+ use ratatui::widgets::WidgetRef;
+ 
+ use crate::render::Insets;
+@@ -81,7 +82,7 @@ impl Renderable for () {
+ 
+ impl Renderable for &str {
+     fn render(&self, area: Rect, buf: &mut Buffer) {
+-        self.render_ref(area, buf);
++        WidgetRef::render_ref(self, area, buf);
+     }
+     fn desired_height(&self, _width: u16) -> u16 {
+         1
+@@ -90,7 +91,7 @@ impl Renderable for &str {
+ 
+ impl Renderable for String {
+     fn render(&self, area: Rect, buf: &mut Buffer) {
+-        self.render_ref(area, buf);
++        WidgetRef::render_ref(&self.as_str(), area, buf);
+     }
+     fn desired_height(&self, _width: u16) -> u16 {
+         1
+@@ -99,7 +100,7 @@ impl Renderable for String {
+ 
+ impl<'a> Renderable for Span<'a> {
+     fn render(&self, area: Rect, buf: &mut Buffer) {
+-        self.render_ref(area, buf);
++        Widget::render(self, area, buf);
+     }
+     fn desired_height(&self, _width: u16) -> u16 {
+         1
+@@ -108,7 +109,7 @@ impl<'a> Renderable for Span<'a> {
+ 
+ impl<'a> Renderable for Line<'a> {
+     fn render(&self, area: Rect, buf: &mut Buffer) {
+-        WidgetRef::render_ref(self, area, buf);
++        Widget::render(self, area, buf);
+     }
+     fn desired_height(&self, _width: u16) -> u16 {
+         1
+@@ -117,7 +118,7 @@ impl<'a> Renderable for Line<'a> {
+ 
+ impl<'a> Renderable for Paragraph<'a> {
+     fn render(&self, area: Rect, buf: &mut Buffer) {
+-        self.render_ref(area, buf);
++        Widget::render(self, area, buf);
+     }
+     fn desired_height(&self, width: u16) -> u16 {
+         self.line_count(width) as u16
+diff --git a/codex-rs/tui/src/resume_picker.rs b/codex-rs/tui/src/resume_picker.rs
+index c7be652f8..10ae4544b 100644
+--- a/codex-rs/tui/src/resume_picker.rs
++++ b/codex-rs/tui/src/resume_picker.rs
+@@ -1877,11 +1877,11 @@ fn draw_picker(tui: &mut Tui, state: &PickerState) -> std::io::Result<()> {
+             state.action.title().bold().cyan()
+         };
+         let header_line: Line = vec![header_title].into();
+-        frame.render_widget_ref(header_line, chrome(header));
++        frame.render_widget_ref(&header_line, chrome(header));
+ 
+         // Search line
+         let search = chrome(search);
+-        frame.render_widget_ref(search_line(state, search.width), search);
++        frame.render_widget_ref(&search_line(state, search.width), search);
+ 
+         let list = Rect::new(
+             list.x.saturating_add(2),
+@@ -2051,7 +2051,7 @@ fn render_picker_footer(
+         if y >= area.bottom() {
+             break;
+         }
+-        frame.render_widget_ref(line, Rect::new(area.x, y, area.width, 1));
++        frame.render_widget_ref(&line, Rect::new(area.x, y, area.width, 1));
+     }
+ }
+ 
+@@ -2065,7 +2065,7 @@ fn render_picker_footer_separator(
+     }
+ 
+     let separator = "─".repeat(area.width as usize);
+-    frame.render_widget_ref(Line::from(separator.dim()), area);
++    frame.render_widget_ref(&Line::from(separator.dim()), area);
+ 
+     let progress_width = UnicodeWidthStr::width(progress_label.as_str()) as u16;
+     if progress_width < area.width {
+@@ -2075,7 +2075,7 @@ fn render_picker_footer_separator(
+             progress_width,
+             1,
+         );
+-        frame.render_widget_ref(Line::from(progress_label.dim()), percent_area);
++        frame.render_widget_ref(&Line::from(progress_label.dim()), percent_area);
+     }
+ }
+ 
+@@ -2314,7 +2314,7 @@ fn render_transcript_loading_overlay(frame: &mut crate::custom_terminal::Frame,
+         message_width.min(overlay.width),
+         1,
+     );
+-    frame.render_widget_ref(Line::from(message.bold()), line);
++    frame.render_widget_ref(&Line::from(message.bold()), line);
+ }
+ 
+ fn transcript_loading_overlay_style() -> Style {
+@@ -2431,7 +2431,7 @@ fn render_list(frame: &mut crate::custom_terminal::Frame, area: Rect, state: &Pi
+     let rows = &state.filtered_rows;
+     if rows.is_empty() {
+         let message = render_empty_state_line(state);
+-        frame.render_widget_ref(message, area);
++        frame.render_widget_ref(&message, area);
+         return;
+     }
+ 
+@@ -2447,7 +2447,7 @@ fn render_list(frame: &mut crate::custom_terminal::Frame, area: Rect, state: &Pi
+     );
+     if show_more_above {
+         frame.render_widget_ref(
+-            more_line("↑ more"),
++            &more_line("↑ more"),
+             Rect::new(area.x, area.y, area.width, 1),
+         );
+     }
+@@ -2468,7 +2468,7 @@ fn render_list(frame: &mut crate::custom_terminal::Frame, area: Rect, state: &Pi
+             if y >= content_area.y.saturating_add(content_area.height) {
+                 break;
+             }
+-            frame.render_widget_ref(line, Rect::new(area.x, y, area.width, 1));
++            frame.render_widget_ref(&line, Rect::new(area.x, y, area.width, 1));
+             y = y.saturating_add(1);
+         }
+         if state.density == SessionListDensity::Comfortable
+@@ -2484,7 +2484,7 @@ fn render_list(frame: &mut crate::custom_terminal::Frame, area: Rect, state: &Pi
+     {
+         let loading_line: Line = vec!["  ".into(), "Loading older sessions…".italic().dim()].into();
+         let rect = Rect::new(area.x, y, area.width, 1);
+-        frame.render_widget_ref(loading_line, rect);
++        frame.render_widget_ref(&loading_line, rect);
+     }
+     if show_more_below {
+         let label = if state.pagination.loading.is_pending() {
+@@ -2493,7 +2493,7 @@ fn render_list(frame: &mut crate::custom_terminal::Frame, area: Rect, state: &Pi
+             "↓ more"
+         };
+         frame.render_widget_ref(
+-            more_line(label),
++            &more_line(label),
+             Rect::new(
+                 area.x,
+                 area.y.saturating_add(area.height.saturating_sub(1)),
+@@ -3736,7 +3736,7 @@ mod tests {
+         {
+             let mut frame = terminal.get_frame();
+             let line = search_line(&state, frame.area().width);
+-            frame.render_widget_ref(line, frame.area());
++            frame.render_widget_ref(&line, frame.area());
+         }
+         terminal.flush().expect("flush");
+ 
+@@ -4670,7 +4670,7 @@ session_picker_view = "dense"
+         {
+             let mut frame = terminal.get_frame();
+             let line = search_line(&state, frame.area().width);
+-            frame.render_widget_ref(line, frame.area());
++            frame.render_widget_ref(&line, frame.area());
+         }
+         terminal.flush().expect("flush");
+ 
+diff --git a/codex-rs/tui/src/startup_hooks_review.rs b/codex-rs/tui/src/startup_hooks_review.rs
+index 7c1252489..704948abc 100644
+--- a/codex-rs/tui/src/startup_hooks_review.rs
++++ b/codex-rs/tui/src/startup_hooks_review.rs
+@@ -235,7 +235,7 @@ fn selection_item(name: &str, is_disabled: bool) -> SelectionItem {
+ fn draw_view(tui: &mut Tui, view: &ListSelectionView) -> Result<()> {
+     tui.draw(u16::MAX, |frame| {
+         let area = frame.area();
+-        frame.render_widget_ref(Clear, area);
++        frame.render_widget_ref(&Clear, area);
+         let view_area = Rect::new(
+             area.x,
+             area.y,
+diff --git a/codex-rs/tui/src/status_indicator_widget.rs b/codex-rs/tui/src/status_indicator_widget.rs
+index dabe00535..bf46b5be8 100644
+--- a/codex-rs/tui/src/status_indicator_widget.rs
++++ b/codex-rs/tui/src/status_indicator_widget.rs
+@@ -15,6 +15,7 @@ use ratatui::text::Line;
+ use ratatui::text::Span;
+ use ratatui::text::Text;
+ use ratatui::widgets::Paragraph;
++use ratatui::widgets::Widget;
+ use ratatui::widgets::WidgetRef;
+ use unicode_width::UnicodeWidthStr;
+ 
+@@ -285,7 +286,7 @@ impl Renderable for StatusIndicatorWidget {
+             lines.extend(details.into_iter().take(max_details));
+         }
+ 
+-        Paragraph::new(Text::from(lines)).render_ref(area, buf);
++        Paragraph::new(Text::from(lines)).render(area, buf);
+     }
+ }
+ 
+diff --git a/codex-rs/tui/src/terminal_palette.rs b/codex-rs/tui/src/terminal_palette.rs
+index 53c68d96e..bc4615c40 100644
+--- a/codex-rs/tui/src/terminal_palette.rs
++++ b/codex-rs/tui/src/terminal_palette.rs
+@@ -78,9 +78,6 @@ pub(crate) fn set_default_colors_from_startup_probe(
+ #[cfg(all(unix, not(test)))]
+ mod imp {
+     use super::DefaultColors;
+-    use crossterm::style::Color as CrosstermColor;
+-    use crossterm::style::query_background_color;
+-    use crossterm::style::query_foreground_color;
+     use std::sync::Mutex;
+     use std::sync::OnceLock;
+ 
+@@ -138,18 +135,9 @@ mod imp {
+                 return;
+             }
+ 
+-            // Focus events arrive after crossterm's event stream is active. Requery through
+-            // crossterm here so unrelated input stays in crossterm's skipped-event queue instead
+-            // of being consumed by the bounded startup probe's direct tty reads.
+-            let fg = query_foreground_color()
+-                .ok()
+-                .flatten()
+-                .and_then(color_to_tuple);
+-            let bg = query_background_color()
+-                .ok()
+-                .flatten()
+-                .and_then(color_to_tuple);
+-            cache.value = fg.zip(bg).map(|(fg, bg)| DefaultColors { fg, bg });
++            // Upstream crossterm 0.29.0 does not expose OSC 10/11 color queries, so fall back to
++            // the bounded startup probe to refresh the cached default colors.
++            cache.value = query_default_colors();
+             cache.attempted = true;
+         }
+     }
+@@ -169,12 +157,6 @@ mod imp {
+             })
+     }
+ 
+-    fn color_to_tuple(color: CrosstermColor) -> Option<(u8, u8, u8)> {
+-        match color {
+-            CrosstermColor::Rgb { r, g, b } => Some((r, g, b)),
+-            _ => None,
+-        }
+-    }
+ }
+ 
+ #[cfg(not(all(unix, not(test))))]
+diff --git a/codex-rs/tui/src/tui.rs b/codex-rs/tui/src/tui.rs
+index 32123b787..e9fafe241 100644
+--- a/codex-rs/tui/src/tui.rs
++++ b/codex-rs/tui/src/tui.rs
+@@ -492,7 +492,7 @@ struct PendingHistoryLines {
+ 
+ fn clear_for_viewport_change<B>(terminal: &mut CustomTerminal<B>, new_area: Rect) -> Result<()>
+ where
+-    B: Backend + Write,
++    B: Backend<Error = std::io::Error> + Write,
+ {
+     let clear_position = if terminal.viewport_area.is_empty() {
+         new_area.as_position()
