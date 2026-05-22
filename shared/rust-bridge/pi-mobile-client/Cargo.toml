@@ -1,0 +1,11 @@
+[package]
+name = "pi-mobile-client"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+pi_agent_rust = { path = "../../third_party/pi_agent_rust", default-features = false, features = ["js-extensions"] }

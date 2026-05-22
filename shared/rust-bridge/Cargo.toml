@@ -7,6 +7,7 @@ members = [
     "codex-mobile-client",
     "uniffi-bindgen",
     "codex-tui",
+    "pi-mobile-client",
 ]
 resolver = "3"
 
