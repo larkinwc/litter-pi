@@ -61,6 +61,7 @@ rpc-trace = []
 
 [dev-dependencies]
 tempfile = "3"
+serial_test = "3"
 
 [build-dependencies]
 uniffi = { version = "0.31.0", features = ["build"] }

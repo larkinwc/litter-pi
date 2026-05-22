@@ -400,6 +400,7 @@ fn reset_platform_table() {
 mod tests {
     use super::*;
     use crate::preferences::preferences_save;
+    use serial_test::serial;
     use tempfile::tempdir;
 
     fn pin(server: &str, thread: &str) -> PinnedThreadKey {
@@ -410,6 +411,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn export_includes_rust_prefs() {
         reset_platform_table();
         let dir = tempdir().unwrap();
@@ -435,6 +437,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn apply_writes_back_rust_prefs_when_remote_is_newer() {
         reset_platform_table();
         let dir = tempdir().unwrap();
@@ -472,6 +475,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn apply_platform_key_returns_writeback() {
         reset_platform_table();
         let dir = tempdir().unwrap();
@@ -497,6 +501,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn apply_ignores_unknown_platform_keys() {
         reset_platform_table();
         let dir = tempdir().unwrap();
@@ -520,6 +525,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn local_platform_change_wins_when_newer() {
         reset_platform_table();
         let dir = tempdir().unwrap();
@@ -550,6 +556,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn export_includes_platform_table_entries() {
         reset_platform_table();
         let dir = tempdir().unwrap();
@@ -562,6 +569,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn mismatched_version_is_ignored() {
         reset_platform_table();
         let dir = tempdir().unwrap();
@@ -577,6 +585,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn corrupt_bytes_return_error() {
         reset_platform_table();
         let dir = tempdir().unwrap();
