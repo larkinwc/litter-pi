@@ -156,10 +156,14 @@ struct PiByokSettingsView: View {
                 model: model.isEmpty ? nil : model
             )
             startedServerId = returnedId
-            let baseURLNote = provider == .openaiCompatible
-                ? " base=\(baseURL)"
-                : ""
-            status = "Pi session started.\(baseURLNote)"
+            if provider == .openaiCompatible {
+                let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+                status = trimmed.isEmpty
+                    ? "Pi session started."
+                    : "Pi session started. Using base URL: \(trimmed)"
+            } else {
+                status = "Pi session started."
+            }
         } catch {
             status = "Failed to start pi session: \(error.localizedDescription)"
         }

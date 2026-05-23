@@ -16,6 +16,7 @@ use std::sync::Once;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::server::{Command, PiEvent, PiSessionConfig, ToolFactoryKind};
+use crate::tools::ish::IshToolFactory;
 use crate::tools::pty_dev::PtyDevToolFactory;
 
 /// Process-global counter incremented by the bridge's panic hook.
@@ -186,10 +187,21 @@ async fn build_pi_session(
     use std::sync::Arc;
 
     // BYOK `OPENAI_BASE_URL` handling is performed by the caller
-    // (typically `pi-server-runner::main`) before any threads spawn,
-    // because Rust 2024 marks `std::env::set_var` as `unsafe` and
-    // `pi-mobile-client` is `#![forbid(unsafe_code)]`.
-    let _ = &config.base_url; // currently informational; see note above.
+    // (`pi-server-runner::main` on host, the iOS BYOK start path in
+    // `codex-mobile-client::session::connection` on device) before
+    // any threads spawn, because Rust 2024 marks `std::env::set_var`
+    // as `unsafe` and `pi-mobile-client` is `#![forbid(unsafe_code)]`.
+    //
+    // We surface a runtime warning if a base URL was supplied without
+    // an OpenAI API key so the failure mode is observable in logs
+    // instead of silently dropping the override.
+    if config.base_url.is_some() && config.api_key.is_none() {
+        tracing::warn!(
+            target: "pi_mobile_client::bridge",
+            "BYOK base_url set but no OPENAI_API_KEY supplied; pi will use the env-resolved provider auth"
+        );
+    }
+    let _ = &config.base_url; // env-mutation handled by the caller.
 
     let mut options = SessionOptions {
         provider: config.provider.clone(),
@@ -204,9 +216,10 @@ async fn build_pi_session(
     if let Some(iters) = config.max_tool_iterations {
         options.max_tool_iterations = iters;
     }
-    if let Some(kind) = config.tool_factory {
+    if let Some(kind) = config.tool_factory.clone() {
         options.tool_factory = match kind {
             ToolFactoryKind::PtyDev => Some(Arc::new(PtyDevToolFactory::new())),
+            ToolFactoryKind::Ish(exec) => Some(Arc::new(IshToolFactory::new(exec))),
         };
     }
 

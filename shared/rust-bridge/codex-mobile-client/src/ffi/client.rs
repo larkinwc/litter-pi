@@ -364,6 +364,38 @@ impl AppClient {
             is_local: true,
             tls: false,
         };
+        // Propagate BYOK base URL into the process environment on the
+        // caller's thread before pi spawns its runtime — pi's
+        // OpenAI-compatible provider reads `OPENAI_BASE_URL` at session
+        // build time. Mirrors `pi-server-runner::main`. Rust 2024 marks
+        // `std::env::set_var` as `unsafe`; `codex-mobile-client` does
+        // not forbid unsafe, so the call is safely scoped here rather
+        // than inside `pi-mobile-client` (which does forbid unsafe).
+        if let Some(url) = base_url.as_deref() {
+            let trimmed = url.trim();
+            if !trimmed.is_empty() {
+                // SAFETY: setting an env var on the caller's thread
+                // before the pi asupersync thread is spawned. No other
+                // thread is reading `OPENAI_BASE_URL` concurrently.
+                unsafe {
+                    std::env::set_var("OPENAI_BASE_URL", trimmed);
+                }
+            }
+        }
+
+        // On iOS, swap pi's default `BashTool` for the iSH-backed
+        // shell so tool calls run inside the Alpine fakefs instead of
+        // the iOS host. The adapter is iOS-only; on other targets the
+        // factory stays `None` and pi falls back to its host shell
+        // (this path is only ever reached on the iOS device/sim lane
+        // in practice).
+        #[cfg(all(target_os = "ios", not(target_abi = "macabi")))]
+        let tool_factory = Some(pi_mobile_client::ToolFactoryKind::Ish(Arc::new(
+            crate::pi_ish_adapter::IshRuntimeExec,
+        )));
+        #[cfg(not(all(target_os = "ios", not(target_abi = "macabi"))))]
+        let tool_factory: Option<pi_mobile_client::ToolFactoryKind> = None;
+
         let byok = pi_mobile_client::PiSessionConfig {
             provider: Some(provider),
             model,
@@ -373,7 +405,7 @@ impl AppClient {
             append_system_prompt: None,
             max_tool_iterations: None,
             enabled_tools: None,
-            tool_factory: None,
+            tool_factory,
         };
         blocking_async!(self.rt, self.inner, |c| {
             c.connect_local_pi_with_byok(config, Some(byok))

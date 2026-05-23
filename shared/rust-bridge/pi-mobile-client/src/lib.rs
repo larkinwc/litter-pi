@@ -21,7 +21,7 @@ mod auth;
 mod config;
 mod events;
 mod local_runtime_instructions;
-mod tools;
+pub mod tools;
 
 // Narrow public surface.
 pub use server::{

@@ -76,16 +76,30 @@ pub enum PiEvent {
 
 /// Which built-in tool factory to mount on the in-process pi runtime.
 ///
-/// Kept narrow on purpose; the only host-side variant that the
-/// `pi-server-runner` cares about today is `PtyDev`. iOS and Android
-/// build their factories from outside this crate (`IshToolFactory` /
-/// `ProotToolFactory`) and inject them through `with_*` variants of
-/// pi's session-options, not through this enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Kept narrow on purpose; the host-side variant that the
+/// `pi-server-runner` cares about is `PtyDev`. The iOS BYOK path uses
+/// `Ish` to substitute pi's stock `BashTool` for an iSH Alpine fakefs
+/// shell; the carried `Arc<dyn IshExec>` is supplied by the caller
+/// (typically a `codex-mobile-client` adapter over
+/// `ish_runtime::run`). Android's `ProotToolFactory` will land as an
+/// analogous variant when that platform's runtime is wired in.
+#[derive(Clone)]
 pub enum ToolFactoryKind {
     /// macOS host shell (pi's stock `BashTool`). Used by
     /// `pi-server-runner --local` as a stand-in for iSH.
     PtyDev,
+    /// iOS iSH Alpine fakefs shell. The `Arc<dyn IshExec>` routes
+    /// commands through the iSH kernel embedded in the Litter app.
+    Ish(std::sync::Arc<dyn crate::tools::ish::IshExec>),
+}
+
+impl std::fmt::Debug for ToolFactoryKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ToolFactoryKind::PtyDev => f.write_str("PtyDev"),
+            ToolFactoryKind::Ish(_) => f.write_str("Ish(<IshExec>)"),
+        }
+    }
 }
 
 /// Provider / API-key wiring for an in-process pi session.
