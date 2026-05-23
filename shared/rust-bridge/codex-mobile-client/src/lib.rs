@@ -61,6 +61,27 @@ pub fn ish_default_cwd() -> String {
     "/root".to_string()
 }
 
+/// Inspect whether the iSH Alpine kernel has been booted in this process.
+/// `ish_bootstrap` only records the kernel paths and installs the exec
+/// hook; the kernel is faulted in lazily on the first tool-exec invocation
+/// (see `ish_runtime::ensure_booted`). Tests use this to assert that host
+/// app launch did not eagerly boot the kernel — important on iOS 26.x
+/// simulators where the upstream iSH kernel aborts with `invalid vdso`
+/// (see `library/litter-ish-compatibility.md`).
+///
+/// Non-iOS targets always return `false`.
+#[uniffi::export]
+pub fn ish_is_kernel_booted() -> bool {
+    #[cfg(all(target_os = "ios", not(target_abi = "macabi")))]
+    {
+        return ish_runtime::instance().is_some();
+    }
+    #[cfg(not(all(target_os = "ios", not(target_abi = "macabi"))))]
+    {
+        false
+    }
+}
+
 /// One-time Android proot bootstrap. Kotlin passes the app's native library
 /// directory, the copied Alpine rootfs archive path, and the app data
 /// directory; Rust extracts the rootfs and verifies that `libproot.so` can
