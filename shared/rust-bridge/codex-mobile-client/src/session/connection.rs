@@ -1900,6 +1900,66 @@ fn route_pi_event(
                 params: serde_json::Value::Null,
             });
         }
+        PiEvent::AssistantTextDelta { delta } => {
+            let _ = event_tx.send(ServerEvent::LegacyNotification {
+                runtime_kind,
+                method: "pi/assistantTextDelta".to_string(),
+                params: serde_json::json!({ "delta": delta }),
+            });
+        }
+        PiEvent::AssistantText { text } => {
+            let _ = event_tx.send(ServerEvent::LegacyNotification {
+                runtime_kind,
+                method: "pi/assistantText".to_string(),
+                params: serde_json::json!({ "text": text }),
+            });
+        }
+        PiEvent::ToolExecStart {
+            tool_call_id,
+            tool_name,
+            args_json,
+        } => {
+            let _ = event_tx.send(ServerEvent::LegacyNotification {
+                runtime_kind,
+                method: "pi/toolExecStart".to_string(),
+                params: serde_json::json!({
+                    "toolCallId": tool_call_id,
+                    "toolName": tool_name,
+                    "args": args_json,
+                }),
+            });
+        }
+        PiEvent::ToolExecEnd {
+            tool_call_id,
+            tool_name,
+            result_text,
+            is_error,
+        } => {
+            let _ = event_tx.send(ServerEvent::LegacyNotification {
+                runtime_kind,
+                method: "pi/toolExecEnd".to_string(),
+                params: serde_json::json!({
+                    "toolCallId": tool_call_id,
+                    "toolName": tool_name,
+                    "resultText": result_text,
+                    "isError": is_error,
+                }),
+            });
+        }
+        PiEvent::TurnComplete => {
+            let _ = event_tx.send(ServerEvent::LegacyNotification {
+                runtime_kind,
+                method: "pi/turnComplete".to_string(),
+                params: serde_json::Value::Null,
+            });
+        }
+        PiEvent::TurnError { message } => {
+            let _ = event_tx.send(ServerEvent::LegacyNotification {
+                runtime_kind,
+                method: "pi/turnError".to_string(),
+                params: serde_json::json!({ "message": message }),
+            });
+        }
     }
 }
 

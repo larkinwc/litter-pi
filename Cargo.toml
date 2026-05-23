@@ -9,3 +9,17 @@ resolver = "3"
 members = [
     "services/pi-server-runner",
 ]
+
+# Mirror the workspace.dependencies entries that `pi-mobile-client` (a
+# member of the sibling `shared/rust-bridge/` workspace) inherits with
+# `workspace = true`. When `pi-server-runner` pulls `pi-mobile-client`
+# in via path, cargo walks up from the runner's manifest and resolves
+# `workspace = true` against *this* workspace, not the bridge one, so
+# these entries must be kept in sync with the canonical definitions in
+# `shared/rust-bridge/Cargo.toml`.
+[workspace.dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
+futures = "0.3"
+tracing = "0.1"
+async-trait = "0.1"
+serde_json = "1"

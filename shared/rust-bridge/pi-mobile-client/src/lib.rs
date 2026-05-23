@@ -24,4 +24,7 @@ mod local_runtime_instructions;
 mod tools;
 
 // Narrow public surface.
-pub use server::{Command, InProcessStartArgs, PiEvent, PiInProcessHandle, start_in_process};
+pub use server::{
+    Command, InProcessStartArgs, PiEvent, PiInProcessHandle, PiSessionConfig, ToolFactoryKind,
+    start_in_process,
+};

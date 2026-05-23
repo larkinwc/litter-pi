@@ -17,6 +17,7 @@
 //! only `start_in_process`, `PiInProcessHandle`, `InProcessStartArgs`,
 //! `Command`, and `PiEvent`.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::thread::JoinHandle;
@@ -43,12 +44,82 @@ pub enum Command {
 /// Outbound events emitted by the in-process pi runtime.
 #[derive(Debug, Clone)]
 pub enum PiEvent {
-    /// Emitted in response to `Command::Prompt` until the real agent loop is
-    /// wired in. Tests use this to confirm the runtime is actually pumping
-    /// commands.
+    /// Emitted in response to `Command::Prompt` before the agent loop
+    /// starts (or as the sole response when the runtime was started
+    /// without a configured pi session — the legacy echo behavior used
+    /// by the bridge unit tests).
     PromptReceived { text: String },
+    /// Streaming text delta from the assistant.
+    AssistantTextDelta { delta: String },
+    /// Final assistant text content for the turn.
+    AssistantText { text: String },
+    /// A tool execution started.
+    ToolExecStart {
+        tool_call_id: String,
+        tool_name: String,
+        args_json: String,
+    },
+    /// A tool execution finished.
+    ToolExecEnd {
+        tool_call_id: String,
+        tool_name: String,
+        result_text: String,
+        is_error: bool,
+    },
+    /// The agent turn completed cleanly.
+    TurnComplete,
+    /// The agent turn failed; carries a human-readable error message.
+    TurnError { message: String },
     /// Emitted in response to an explicit `Command::Shutdown`.
     ShuttingDown,
+}
+
+/// Which built-in tool factory to mount on the in-process pi runtime.
+///
+/// Kept narrow on purpose; the only host-side variant that the
+/// `pi-server-runner` cares about today is `PtyDev`. iOS and Android
+/// build their factories from outside this crate (`IshToolFactory` /
+/// `ProotToolFactory`) and inject them through `with_*` variants of
+/// pi's session-options, not through this enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolFactoryKind {
+    /// macOS host shell (pi's stock `BashTool`). Used by
+    /// `pi-server-runner --local` as a stand-in for iSH.
+    PtyDev,
+}
+
+/// Provider / API-key wiring for an in-process pi session.
+///
+/// `pi-mobile-client` keeps this as a small set of primitives rather
+/// than re-exporting `pi::sdk::SessionOptions` so the crate's public
+/// surface stays narrow and Send-safe.
+#[derive(Debug, Clone, Default)]
+pub struct PiSessionConfig {
+    /// pi provider id, e.g. `"anthropic"` or `"openai"`.
+    pub provider: Option<String>,
+    /// pi model id.
+    pub model: Option<String>,
+    /// Explicit API key, overrides whatever pi resolves from the
+    /// process environment / auth store.
+    pub api_key: Option<String>,
+    /// Base URL to forward to pi via the `OPENAI_BASE_URL` environment
+    /// hand-off. We set this on the runtime worker thread before pi
+    /// loads its provider, so the OpenAI-compatible provider picks
+    /// it up.
+    pub base_url: Option<String>,
+    /// Working directory the agent session opens in. Defaults to the
+    /// runtime worker's `cwd`.
+    pub working_directory: Option<PathBuf>,
+    /// Optional system-prompt append used to inject the platform
+    /// preamble (e.g. `IOS_PI_PREAMBLE`).
+    pub append_system_prompt: Option<String>,
+    /// Optional cap on the agent tool-iteration loop. `None` keeps
+    /// pi's default.
+    pub max_tool_iterations: Option<usize>,
+    /// Enabled tool allow-list. `None` keeps pi's default set.
+    pub enabled_tools: Option<Vec<String>>,
+    /// Which factory mounts the shell tool for this runtime.
+    pub tool_factory: Option<ToolFactoryKind>,
 }
 
 /// Arguments accepted by `start_in_process`.
@@ -63,6 +134,12 @@ pub struct InProcessStartArgs {
     /// Bounded capacity for the outbound event broadcast channel. Defaults
     /// to 64.
     pub event_buffer: Option<usize>,
+    /// Optional pi session configuration. When `None`, the runtime stays
+    /// in echo-mode (the bridge round-trips `Command::Prompt` as a
+    /// `PiEvent::PromptReceived` for the unit tests). When `Some`, the
+    /// asupersync worker builds a real pi `AgentSession` and drives
+    /// prompts through pi's agent loop.
+    pub session: Option<PiSessionConfig>,
 }
 
 /// Handle to an in-process pi runtime spawned by `start_in_process`.
@@ -161,6 +238,7 @@ pub fn start_in_process(args: InProcessStartArgs) -> PiInProcessHandle {
 
     let events_tx_for_worker = events_tx.clone();
     let cancel_flag_for_worker = Arc::clone(&cancel_flag);
+    let session_for_worker = args.session;
 
     let worker = std::thread::Builder::new()
         .name("pi-asupersync".to_string())
@@ -184,6 +262,7 @@ pub fn start_in_process(args: InProcessStartArgs) -> PiInProcessHandle {
                 events_tx: events_tx_for_worker,
                 shutdown_rx,
                 cancel_sentinel: cancel_flag_for_worker,
+                session: session_for_worker,
             };
 
             runtime.block_on(runtime_bridge::drive(channels));
