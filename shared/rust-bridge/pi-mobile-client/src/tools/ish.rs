@@ -28,6 +28,12 @@ use pi::sdk::{
 };
 
 /// Output produced by an [`IshExec`] invocation.
+///
+/// Consumed by the iOS BYOK start path that mounts an `IshExec` adapter
+/// over `codex-mobile-client::ish_runtime`. Allowed to be dead code at
+/// crate scope because the adapter lives in `codex-mobile-client`
+/// (which depends on `pi-mobile-client`, not the other way around).
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct IshExecOutput {
     /// Raw stdout+stderr bytes, in the order iSH produced them.
@@ -43,6 +49,11 @@ pub struct IshExecOutput {
 /// tests supply a recording stub. Trait methods take `&self` and a few
 /// owned arguments so the impl can be stored as `Arc<dyn IshExec>` and
 /// shared across the agent loop without lifetime juggling.
+///
+/// Implemented by an adapter in `codex-mobile-client` (the iOS BYOK
+/// start path wires `codex-mobile-client::ish_runtime::run` behind it);
+/// allowed to be dead code at crate scope here.
+#[allow(dead_code)]
 pub trait IshExec: Send + Sync {
     /// Run `command` inside the iSH fakefs.
     ///
@@ -57,11 +68,13 @@ pub trait IshExec: Send + Sync {
 /// Owns the working directory it was created against (for diagnostics
 /// only — the actual path lives inside the iSH fakefs) and an
 /// `Arc<dyn IshExec>` it forwards every call to.
+#[allow(dead_code)]
 pub struct IshTool {
     cwd: PathBuf,
     exec: Arc<dyn IshExec>,
 }
 
+#[allow(dead_code)]
 impl IshTool {
     /// Construct an `IshTool` bound to `cwd` and `exec`.
     pub fn new(cwd: &Path, exec: Arc<dyn IshExec>) -> Self {
@@ -161,12 +174,14 @@ impl Tool for IshTool {
 /// [`pi::sdk::default_tool_registry`], then drops the built-in
 /// `BashTool` and substitutes an [`IshTool`] backed by the injected
 /// [`IshExec`].
+#[allow(dead_code)]
 pub struct IshToolFactory {
     exec: Arc<dyn IshExec>,
 }
 
 impl IshToolFactory {
     /// Create a new factory bound to `exec`.
+    #[allow(dead_code)]
     pub fn new(exec: Arc<dyn IshExec>) -> Self {
         Self { exec }
     }
@@ -195,7 +210,7 @@ impl ToolFactory for IshToolFactory {
         // If "bash" was in the enabled allow-list (the default), swap
         // in the iSH-backed tool. Otherwise leave it dropped — the
         // caller explicitly disabled shell access.
-        if enabled.iter().any(|name| *name == "bash") {
+        if enabled.contains(&"bash") {
             tools.push(Box::new(IshTool::new(cwd, Arc::clone(&self.exec))));
         }
 

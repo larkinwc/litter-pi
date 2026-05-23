@@ -339,6 +339,49 @@ impl AppClient {
         })
     }
 
+    /// Like [`Self::connect_local_pi`] but threads a BYOK profile
+    /// (provider, api_key, optional base URL) into the in-process pi
+    /// runtime so the agent loop can drive turns against the configured
+    /// Anthropic or OpenAI-compatible provider. The Swift caller passes
+    /// `provider = "anthropic"` for BYOK Anthropic or `"openai"` for a
+    /// BYOK OpenAI-compatible profile and supplies the matching key (+
+    /// optional `base_url` for OpenAI-compatible).
+    pub async fn connect_local_pi_byok(
+        &self,
+        server_id: String,
+        display_name: String,
+        provider: String,
+        api_key: String,
+        base_url: Option<String>,
+        model: Option<String>,
+    ) -> Result<String, ClientError> {
+        let config = crate::session::connection::ServerConfig {
+            server_id,
+            display_name,
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            websocket_url: None,
+            is_local: true,
+            tls: false,
+        };
+        let byok = pi_mobile_client::PiSessionConfig {
+            provider: Some(provider),
+            model,
+            api_key: Some(api_key),
+            base_url,
+            working_directory: None,
+            append_system_prompt: None,
+            max_tool_iterations: None,
+            enabled_tools: None,
+            tool_factory: None,
+        };
+        blocking_async!(self.rt, self.inner, |c| {
+            c.connect_local_pi_with_byok(config, Some(byok))
+                .await
+                .map_err(|e| ClientError::Transport(e.to_string()))
+        })
+    }
+
     // ── Agent metadata cache ─────────────────────────────────────────────
     //
     // Populated whenever `list_alleycat_agents` succeeds against any

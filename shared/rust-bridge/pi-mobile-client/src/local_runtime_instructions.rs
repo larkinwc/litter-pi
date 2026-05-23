@@ -16,6 +16,11 @@
 /// * the working directory is `/root` inside that fakefs,
 /// * host paths (`~/Documents/...`, `/var/mobile/...`) are NOT visible
 ///   from the shell tool and must not be passed to it.
+///
+/// Consumed by `codex-mobile-client::session::connection::connect_local_pi`
+/// once the iOS BYOK entry path attaches the preamble via the pi
+/// `SessionOptions::append_system_prompt` knob.
+#[allow(dead_code)]
 pub const IOS_PI_PREAMBLE: &str = concat!(
     "You are running inside Litter on iOS. The shell tool executes commands ",
     "inside an Alpine Linux fakefs hosted by the iSH user-mode x86 emulator. ",
@@ -31,6 +36,10 @@ pub const IOS_PI_PREAMBLE: &str = concat!(
 /// the `ProotToolFactory` feature. Keeping it here (rather than in a
 /// separate file) means both platforms share the same preamble policy
 /// surface.
+///
+/// Not yet consumed; the Android in-process feature wires it through
+/// the same `append_system_prompt` knob the iOS path uses.
+#[allow(dead_code)]
 pub const ANDROID_PI_PREAMBLE: &str = concat!(
     "You are running inside Litter on Android. The shell tool executes ",
     "commands inside a proot Linux environment rooted at the app's private ",

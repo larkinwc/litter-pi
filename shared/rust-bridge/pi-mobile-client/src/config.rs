@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Injected by callers (rather than being inferred from `cfg!`) so the
 /// builder is unit-testable on the host.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MobilePlatform {
     Ios,
@@ -28,6 +29,7 @@ pub enum MobilePlatform {
 /// and `Bundle.main.url(forResource:"cacert", withExtension:"pem")`.
 /// On Android they come from `Context.getFilesDir()` and an extracted
 /// `assets/cacert.pem`.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct SandboxInputs {
     pub platform: MobilePlatform,
@@ -42,6 +44,7 @@ pub struct SandboxInputs {
 }
 
 /// Resolved sandbox configuration the in-process runtime hands to pi.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct PiSandboxConfig {
     /// Value pi will see as `Config::global_dir()`. Exposed both as a
@@ -76,6 +79,7 @@ pub struct PiSandboxConfig {
 /// The function does not create the directories; the caller is
 /// responsible for `fs::create_dir_all` at app startup. We only resolve
 /// paths here so the builder stays pure and unit-testable.
+#[allow(dead_code)]
 pub fn build_sandbox_config(inputs: SandboxInputs) -> PiSandboxConfig {
     match inputs.platform {
         MobilePlatform::Ios => build_ios(inputs),
@@ -83,6 +87,7 @@ pub fn build_sandbox_config(inputs: SandboxInputs) -> PiSandboxConfig {
     }
 }
 
+#[allow(dead_code)]
 fn build_ios(inputs: SandboxInputs) -> PiSandboxConfig {
     // iOS sandbox paths. Strings are intentionally exact so the
     // VAL-IOS-PI-010 grep ("Application Support/pi") matches.
@@ -112,6 +117,7 @@ fn build_ios(inputs: SandboxInputs) -> PiSandboxConfig {
     }
 }
 
+#[allow(dead_code)]
 fn build_android(inputs: SandboxInputs) -> PiSandboxConfig {
     // Android: <filesDir>/pi and <filesDir>/home/pi. The mobile
     // platform passes home_dir = filesDir (its parent for iOS is
@@ -137,6 +143,7 @@ fn build_android(inputs: SandboxInputs) -> PiSandboxConfig {
     }
 }
 
+#[allow(dead_code)]
 fn path_to_str_lossy(p: &Path) -> String {
     p.to_string_lossy().into_owned()
 }

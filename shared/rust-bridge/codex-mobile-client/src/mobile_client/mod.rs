@@ -1411,13 +1411,25 @@ impl MobileClient {
         &self,
         config: ServerConfig,
     ) -> Result<String, TransportError> {
+        self.connect_local_pi_with_byok(config, None).await
+    }
+
+    /// Like [`Self::connect_local_pi`] but threads a BYOK pi
+    /// `PiSessionConfig` (provider, api_key, optional base URL) into
+    /// the in-process runtime so the agent loop can actually drive
+    /// turns against the configured provider.
+    pub async fn connect_local_pi_with_byok(
+        &self,
+        config: ServerConfig,
+        byok: Option<pi_mobile_client::PiSessionConfig>,
+    ) -> Result<String, TransportError> {
         let server_id = config.server_id.clone();
         if self.existing_active_session(server_id.as_str()).is_some() {
             info!("MobileClient: reusing existing local pi session {server_id}");
             return Ok(server_id);
         }
         self.replace_existing_session(server_id.as_str()).await;
-        let session = Arc::new(ServerSession::connect_local_pi(config).await?);
+        let session = Arc::new(ServerSession::connect_local_pi_with_byok(config, byok).await?);
         self.app_store
             .upsert_server(session.config(), ServerHealthSnapshot::Connected);
 

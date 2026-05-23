@@ -818,6 +818,17 @@ impl ServerSession {
     /// already drops the pi handle, which in turn signals pi's
     /// asupersync runtime to cancel in-flight work.
     pub async fn connect_local_pi(config: ServerConfig) -> Result<Self, TransportError> {
+        Self::connect_local_pi_with_byok(config, None).await
+    }
+
+    /// Like [`Self::connect_local_pi`] but accepts an explicit pi
+    /// `PiSessionConfig` (provider, api_key, optional base URL, etc.).
+    /// `None` keeps the legacy echo-mode behavior used by the
+    /// reachability test.
+    pub async fn connect_local_pi_with_byok(
+        config: ServerConfig,
+        byok: Option<pi_mobile_client::PiSessionConfig>,
+    ) -> Result<Self, TransportError> {
         use pi_mobile_client::{InProcessStartArgs as PiInProcessStartArgs, start_in_process};
 
         let (health_tx, health_rx) = watch::channel(ConnectionHealth::Connecting {
@@ -825,7 +836,10 @@ impl ServerSession {
             max_attempts: 1,
         });
 
-        let pi_handle = start_in_process(PiInProcessStartArgs::default());
+        let pi_handle = start_in_process(PiInProcessStartArgs {
+            session: byok,
+            ..PiInProcessStartArgs::default()
+        });
         let mut pi_events = pi_handle.subscribe();
 
         let (event_tx, _) = broadcast::channel::<ServerEvent>(256);

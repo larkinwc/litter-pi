@@ -40,6 +40,7 @@ struct SettingsView: View {
                     petSection
                     experimentalSection
                     accountSection
+                    piRuntimeSection
                     serversSection
                 }
                 .scrollContentBackground(.hidden)
@@ -316,6 +317,29 @@ struct SettingsView: View {
             } else {
                 SettingsDisconnectedAccountSection()
             }
+        }
+    }
+
+    // MARK: - Pi Runtime Section (BYOK)
+
+    private var piRuntimeSection: some View {
+        Section {
+            NavigationLink {
+                PiByokSettingsView()
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "cpu.fill")
+                        .foregroundColor(LitterTheme.accent)
+                        .frame(width: 20)
+                    Text("Pi runtime (BYOK)")
+                        .litterFont(.subheadline)
+                        .foregroundColor(LitterTheme.textPrimary)
+                }
+            }
+            .listRowBackground(LitterTheme.surface.opacity(0.6))
+        } header: {
+            Text("Pi")
+                .foregroundColor(LitterTheme.textSecondary)
         }
     }
 
