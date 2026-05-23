@@ -365,21 +365,27 @@ impl AppClient {
             tls: false,
         };
         // Propagate BYOK base URL into the process environment on the
-        // caller's thread before pi spawns its runtime — pi's
-        // OpenAI-compatible provider reads `OPENAI_BASE_URL` at session
-        // build time. Mirrors `pi-server-runner::main`. Rust 2024 marks
-        // `std::env::set_var` as `unsafe`; `codex-mobile-client` does
-        // not forbid unsafe, so the call is safely scoped here rather
-        // than inside `pi-mobile-client` (which does forbid unsafe).
-        if let Some(url) = base_url.as_deref() {
-            let trimmed = url.trim();
-            if !trimmed.is_empty() {
-                // SAFETY: setting an env var on the caller's thread
-                // before the pi asupersync thread is spawned. No other
-                // thread is reading `OPENAI_BASE_URL` concurrently.
-                unsafe {
-                    std::env::set_var("OPENAI_BASE_URL", trimmed);
-                }
+        // caller's thread before pi spawns its runtime — pi's provider
+        // layer reads `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` at
+        // session build time. Mirrors `pi-server-runner::main`
+        // (commit 5327c09): the env var matching the *active* provider
+        // wins. Rust 2024 marks `std::env::set_var` as `unsafe`;
+        // `codex-mobile-client` does not forbid unsafe, so the call is
+        // safely scoped here rather than inside `pi-mobile-client`
+        // (which does forbid unsafe).
+        let provider_env = ProviderBaseUrlEnv {
+            anthropic_base_url: std::env::var("ANTHROPIC_BASE_URL").ok(),
+            openai_base_url: std::env::var("OPENAI_BASE_URL").ok(),
+        };
+        let effective_base_url =
+            resolve_pi_byok_base_url(&provider, base_url.as_deref(), &provider_env);
+        if let Some(value) = effective_base_url.as_deref() {
+            let env_key = pi_byok_base_url_env_key(&provider);
+            // SAFETY: setting an env var on the caller's thread before
+            // the pi asupersync thread is spawned. No other thread is
+            // reading the BYOK base-URL env vars concurrently.
+            unsafe {
+                std::env::set_var(env_key, value);
             }
         }
 
@@ -400,7 +406,7 @@ impl AppClient {
             provider: Some(provider),
             model,
             api_key: Some(api_key),
-            base_url,
+            base_url: effective_base_url,
             working_directory: None,
             append_system_prompt: None,
             max_tool_iterations: None,
@@ -3122,12 +3128,71 @@ Widget construction guidelines (for reference when making UI decisions):\n\n\
     )
 }
 
+/// Snapshot of the `*_BASE_URL` env vars consulted by
+/// [`AppClient::connect_local_pi_byok`] when forwarding a BYOK profile
+/// into the in-process pi runtime. Capturing them as a struct keeps the
+/// provider-precedence policy a pure function of inputs, mirroring the
+/// `ProviderEnv` shape used by `services/pi-server-runner` (commit
+/// 5327c09).
+#[derive(Debug, Default, Clone)]
+struct ProviderBaseUrlEnv {
+    anthropic_base_url: Option<String>,
+    openai_base_url: Option<String>,
+}
+
+/// Env var name to forward the resolved BYOK base URL through for the
+/// supplied pi provider id.
+fn pi_byok_base_url_env_key(provider: &str) -> &'static str {
+    if provider.eq_ignore_ascii_case("anthropic") {
+        "ANTHROPIC_BASE_URL"
+    } else {
+        "OPENAI_BASE_URL"
+    }
+}
+
+/// Resolve which BYOK base URL pi should see, honoring provider-
+/// specific precedence.
+///
+/// * The Swift-supplied `base_url` argument (if any, trimmed non-empty)
+///   always wins — it represents an explicit BYOK profile override.
+/// * Otherwise the env var matching the *active* provider wins
+///   (`ANTHROPIC_BASE_URL` for `anthropic`, `OPENAI_BASE_URL` for any
+///   other provider id including `openai`).
+/// * Returns `None` when neither source supplies a non-empty value, so
+///   callers do not mutate the process env at all.
+fn resolve_pi_byok_base_url(
+    provider: &str,
+    explicit_base_url: Option<&str>,
+    env: &ProviderBaseUrlEnv,
+) -> Option<String> {
+    if let Some(url) = explicit_base_url {
+        let trimmed = url.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    let candidate = if provider.eq_ignore_ascii_case("anthropic") {
+        env.anthropic_base_url.as_deref()
+    } else {
+        env.openai_base_url.as_deref()
+    };
+    candidate.and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        ImageViewSource, append_missing_amp_mode_models, choose_saved_app_update_server_id,
-        image_read_command, is_mobile_hidden_skill, normalize_model_info_for_runtime,
-        normalized_image_path, splice_generative_ui_preamble,
+        ImageViewSource, ProviderBaseUrlEnv, append_missing_amp_mode_models,
+        choose_saved_app_update_server_id, image_read_command, is_mobile_hidden_skill,
+        normalize_model_info_for_runtime, normalized_image_path, pi_byok_base_url_env_key,
+        resolve_pi_byok_base_url, splice_generative_ui_preamble,
     };
     use crate::store::snapshot::ServerTransportDiagnostics;
     use crate::store::{AppSnapshot, ServerHealthSnapshot, ServerSnapshot};
@@ -3672,6 +3737,104 @@ mod tests {
 
             let shaped = shape_plugin_list(response);
             assert_eq!(shaped[0].display_title, "linear");
+        }
+    }
+
+    /// Mirrors the `ProviderEnv` tests in
+    /// `services/pi-server-runner/src/main.rs` (commit 5327c09): the
+    /// active provider's `*_BASE_URL` env var must reach the in-process
+    /// pi runtime, with the Swift-supplied explicit `base_url` argument
+    /// taking precedence when present.
+    mod connect_local_pi_byok_base_url {
+        use super::{ProviderBaseUrlEnv, pi_byok_base_url_env_key, resolve_pi_byok_base_url};
+
+        fn env_with(anth_base: Option<&str>, oa_base: Option<&str>) -> ProviderBaseUrlEnv {
+            ProviderBaseUrlEnv {
+                anthropic_base_url: anth_base.map(str::to_string),
+                openai_base_url: oa_base.map(str::to_string),
+            }
+        }
+
+        #[test]
+        fn anthropic_provider_picks_up_anthropic_base_url_from_env() {
+            let env = env_with(Some("https://anthropic.proxy.example/v1"), None);
+            let resolved = resolve_pi_byok_base_url("anthropic", None, &env);
+            assert_eq!(
+                resolved.as_deref(),
+                Some("https://anthropic.proxy.example/v1"),
+                "ANTHROPIC_BASE_URL must reach the in-process pi spawn for provider=anthropic"
+            );
+            assert_eq!(pi_byok_base_url_env_key("anthropic"), "ANTHROPIC_BASE_URL");
+        }
+
+        #[test]
+        fn openai_provider_picks_up_openai_base_url_and_ignores_anthropic_url() {
+            let env = env_with(
+                Some("https://anthropic.proxy.example/v1"),
+                Some("https://oa.proxy.example/v1"),
+            );
+            let resolved = resolve_pi_byok_base_url("openai", None, &env);
+            assert_eq!(resolved.as_deref(), Some("https://oa.proxy.example/v1"));
+            assert_eq!(pi_byok_base_url_env_key("openai"), "OPENAI_BASE_URL");
+        }
+
+        #[test]
+        fn anthropic_provider_with_both_env_urls_prefers_anthropic() {
+            let env = env_with(
+                Some("https://anthropic.proxy.example/v1"),
+                Some("https://oa.proxy.example/v1"),
+            );
+            let resolved = resolve_pi_byok_base_url("anthropic", None, &env);
+            assert_eq!(
+                resolved.as_deref(),
+                Some("https://anthropic.proxy.example/v1"),
+                "ANTHROPIC_BASE_URL must win when provider=anthropic is active"
+            );
+        }
+
+        #[test]
+        fn explicit_base_url_argument_overrides_env() {
+            let env = env_with(
+                Some("https://anthropic.proxy.example/v1"),
+                Some("https://oa.proxy.example/v1"),
+            );
+            let resolved = resolve_pi_byok_base_url(
+                "openai",
+                Some("https://explicit.example/v1"),
+                &env,
+            );
+            assert_eq!(
+                resolved.as_deref(),
+                Some("https://explicit.example/v1"),
+                "Swift-supplied base_url must override the env-resolved value"
+            );
+        }
+
+        #[test]
+        fn empty_or_whitespace_explicit_falls_back_to_env() {
+            let env = env_with(Some("https://anthropic.proxy.example/v1"), None);
+            let resolved = resolve_pi_byok_base_url("anthropic", Some("   "), &env);
+            assert_eq!(
+                resolved.as_deref(),
+                Some("https://anthropic.proxy.example/v1"),
+                "whitespace-only base_url argument should not preempt the env fallback"
+            );
+        }
+
+        #[test]
+        fn no_env_and_no_argument_returns_none() {
+            let env = env_with(None, None);
+            assert!(resolve_pi_byok_base_url("anthropic", None, &env).is_none());
+            assert!(resolve_pi_byok_base_url("openai", None, &env).is_none());
+        }
+
+        #[test]
+        fn env_key_defaults_to_openai_for_non_anthropic_providers() {
+            // Mirrors pi-server-runner's behavior: unknown / OpenAI-
+            // compatible providers route through OPENAI_BASE_URL.
+            assert_eq!(pi_byok_base_url_env_key("openai"), "OPENAI_BASE_URL");
+            assert_eq!(pi_byok_base_url_env_key("openrouter"), "OPENAI_BASE_URL");
+            assert_eq!(pi_byok_base_url_env_key("ANTHROPIC"), "ANTHROPIC_BASE_URL");
         }
     }
 }
