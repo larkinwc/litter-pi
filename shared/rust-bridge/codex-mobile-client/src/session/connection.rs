@@ -509,6 +509,12 @@ pub struct ServerSession {
     ssh_client: Option<Arc<SshClient>>,
     ssh_pid: Option<Arc<StdMutex<Option<u32>>>>,
     worker_handle: tokio::task::JoinHandle<()>,
+    /// Per-session pi runtime control surface. Populated only for
+    /// sessions started via `connect_local_pi*`; remote/codex
+    /// sessions leave this `None`. Holds the captured
+    /// `PiInProcessHandle::commands_tx` clone plus the typed
+    /// `PiEvent` broadcast sender exposed to UniFFI subscribers.
+    pi_channels: Option<Arc<crate::pi_runtime_uniffi::PiSessionChannels>>,
 }
 
 #[cfg(test)]
@@ -801,6 +807,7 @@ impl ServerSession {
             ssh_client: None,
             ssh_pid: None,
             worker_handle,
+            pi_channels: None,
         })
     }
 
@@ -841,10 +848,20 @@ impl ServerSession {
             ..PiInProcessStartArgs::default()
         });
         let mut pi_events = pi_handle.subscribe();
+        // Clone the inbound command sender so callers (via
+        // `AppClient.send_pi_prompt`) can forward prompts into the
+        // runtime even after `pi_handle` is moved into the worker
+        // task.
+        let pi_commands_tx = pi_handle.commands_sender();
 
         let (event_tx, _) = broadcast::channel::<ServerEvent>(256);
         let (command_tx, mut command_rx) = mpsc::channel::<SessionCommand>(256);
-        let evt_tx = event_tx.clone();
+        // Typed pi event broadcast. Sized like the codex event
+        // channel so a momentarily slow listener can buffer a few
+        // events without lagging the runtime.
+        let (pi_event_tx, _) =
+            broadcast::channel::<crate::pi_runtime_uniffi::PiEvent>(256);
+        let pi_evt_tx = pi_event_tx.clone();
 
         let worker_handle = tokio::spawn(async move {
             // Keep the pi runtime handle alive for the lifetime of this
@@ -883,7 +900,15 @@ impl ServerSession {
                     }
                     event = pi_events.recv() => {
                         match event {
-                            Ok(event) => route_pi_event(&evt_tx, event),
+                            Ok(event) => {
+                                let typed = crate::pi_runtime_uniffi::PiEvent::from_pi(event);
+                                // Send onto the typed broadcast first
+                                // (errors only happen when there are no
+                                // subscribers, which is fine — the
+                                // events_tx clone on `ServerSession`
+                                // keeps the channel open).
+                                let _ = pi_evt_tx.send(typed);
+                            }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                                 warn!("pi in-process event: lagged, skipped {skipped} events");
                             }
@@ -901,6 +926,11 @@ impl ServerSession {
             config.display_name
         );
 
+        let pi_channels = Arc::new(crate::pi_runtime_uniffi::PiSessionChannels::new(
+            pi_commands_tx,
+            pi_event_tx,
+        ));
+
         Ok(Self {
             config,
             health_tx,
@@ -912,6 +942,7 @@ impl ServerSession {
             ssh_client: None,
             ssh_pid: None,
             worker_handle,
+            pi_channels: Some(pi_channels),
         })
     }
 
@@ -1011,6 +1042,7 @@ impl ServerSession {
             ssh_client: extras.ssh_client,
             ssh_pid: extras.ssh_pid,
             worker_handle,
+            pi_channels: None,
         })
     }
 
@@ -1051,6 +1083,15 @@ impl ServerSession {
     /// Get a watch receiver for health state changes.
     pub fn health(&self) -> watch::Receiver<ConnectionHealth> {
         self.health_rx.clone()
+    }
+
+    /// Access the per-session pi runtime control surface, if this is
+    /// a pi session (started via `connect_local_pi*`). Returns
+    /// `None` for codex/remote sessions.
+    pub fn pi_channels(
+        &self,
+    ) -> Option<Arc<crate::pi_runtime_uniffi::PiSessionChannels>> {
+        self.pi_channels.clone()
     }
 
     pub fn runtime_kinds(&self) -> Vec<AgentRuntimeKind> {
@@ -1880,102 +1921,15 @@ fn route_app_server_event(
     }
 }
 
-/// Translate a [`pi_mobile_client::PiEvent`] into the unified
-/// [`ServerEvent`] broadcast surface used by the rest of the mobile
-/// stack. The translation tags every emission with the canonical
-/// `"pi"` runtime kind so consumers can route by agent without
-/// peeking at the event payload.
-///
-/// Today `PiEvent` only carries lifecycle markers (`PromptReceived`,
-/// `ShuttingDown`); concrete JSON-RPC notifications/requests land
-/// after pi's RPC adapter is wired up. We surface the lifecycle
-/// markers as `LegacyNotification`s so callers can observe them via
-/// the existing event subscription path while the typed notification
-/// translation matures.
-fn route_pi_event(
-    event_tx: &broadcast::Sender<ServerEvent>,
-    event: pi_mobile_client::PiEvent,
-) {
-    use pi_mobile_client::PiEvent;
-
-    let runtime_kind = crate::alleycat::AgentRuntimeKind::Pi.into_id();
-    match event {
-        PiEvent::PromptReceived { text } => {
-            let _ = event_tx.send(ServerEvent::LegacyNotification {
-                runtime_kind,
-                method: "pi/promptReceived".to_string(),
-                params: serde_json::json!({ "text": text }),
-            });
-        }
-        PiEvent::ShuttingDown => {
-            let _ = event_tx.send(ServerEvent::LegacyNotification {
-                runtime_kind,
-                method: "pi/shuttingDown".to_string(),
-                params: serde_json::Value::Null,
-            });
-        }
-        PiEvent::AssistantTextDelta { delta } => {
-            let _ = event_tx.send(ServerEvent::LegacyNotification {
-                runtime_kind,
-                method: "pi/assistantTextDelta".to_string(),
-                params: serde_json::json!({ "delta": delta }),
-            });
-        }
-        PiEvent::AssistantText { text } => {
-            let _ = event_tx.send(ServerEvent::LegacyNotification {
-                runtime_kind,
-                method: "pi/assistantText".to_string(),
-                params: serde_json::json!({ "text": text }),
-            });
-        }
-        PiEvent::ToolExecStart {
-            tool_call_id,
-            tool_name,
-            args_json,
-        } => {
-            let _ = event_tx.send(ServerEvent::LegacyNotification {
-                runtime_kind,
-                method: "pi/toolExecStart".to_string(),
-                params: serde_json::json!({
-                    "toolCallId": tool_call_id,
-                    "toolName": tool_name,
-                    "args": args_json,
-                }),
-            });
-        }
-        PiEvent::ToolExecEnd {
-            tool_call_id,
-            tool_name,
-            result_text,
-            is_error,
-        } => {
-            let _ = event_tx.send(ServerEvent::LegacyNotification {
-                runtime_kind,
-                method: "pi/toolExecEnd".to_string(),
-                params: serde_json::json!({
-                    "toolCallId": tool_call_id,
-                    "toolName": tool_name,
-                    "resultText": result_text,
-                    "isError": is_error,
-                }),
-            });
-        }
-        PiEvent::TurnComplete => {
-            let _ = event_tx.send(ServerEvent::LegacyNotification {
-                runtime_kind,
-                method: "pi/turnComplete".to_string(),
-                params: serde_json::Value::Null,
-            });
-        }
-        PiEvent::TurnError { message } => {
-            let _ = event_tx.send(ServerEvent::LegacyNotification {
-                runtime_kind,
-                method: "pi/turnError".to_string(),
-                params: serde_json::json!({ "message": message }),
-            });
-        }
-    }
-}
+// NOTE: a prior version of this file routed pi events into
+// `ServerEvent::LegacyNotification { method: "pi/..." , ... }` so
+// platforms could observe them through the codex event subscription.
+// That violated the drift guardrail "do not parse upstream wire-format
+// strings in Swift/Kotlin". Pi events now flow through the typed
+// broadcast on `crate::pi_runtime_uniffi::PiSessionChannels` exposed
+// via `AppClient.subscribe_pi_events`. See
+// `crate::pi_runtime_uniffi::PiEvent::from_pi` for the typed
+// translation invoked inside the pi worker loop.
 
 fn route_in_process_event(
     event_tx: &broadcast::Sender<ServerEvent>,
@@ -2072,6 +2026,7 @@ impl ServerSession {
             ssh_client: None,
             ssh_pid: None,
             worker_handle,
+            pi_channels: None,
         }
     }
 
@@ -2108,6 +2063,7 @@ impl ServerSession {
             ssh_client: None,
             ssh_pid: None,
             worker_handle,
+            pi_channels: None,
         }
     }
 }
@@ -2793,6 +2749,57 @@ mod tests {
             .await
             .expect("connect_local_pi succeeds");
         assert_eq!(session.config.server_id, "pi-local");
+        drop(session);
+    }
+
+    /// Send a `Command::Prompt` through the per-session
+    /// `PiSessionChannels::commands_tx` and confirm it surfaces on
+    /// the typed `PiEvent` broadcast (the runtime is in echo mode, so
+    /// the bridge round-trips the prompt as `PromptReceived`). This
+    /// proves the prompt-in / typed-events-out wiring used by
+    /// `AppClient.send_pi_prompt` / `subscribe_pi_events` without
+    /// requiring a live pi session against a real provider.
+    #[tokio::test]
+    async fn pi_session_channels_round_trip_prompt_to_typed_event() {
+        let config = ServerConfig {
+            server_id: "pi-local-prompt".to_string(),
+            display_name: "Local pi".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            websocket_url: None,
+            is_local: true,
+            tls: false,
+        };
+
+        let session = ServerSession::connect_local_pi(config)
+            .await
+            .expect("connect_local_pi succeeds");
+        let channels = session
+            .pi_channels()
+            .expect("pi session exposes PiSessionChannels");
+
+        let mut events_rx = channels.events_tx.subscribe();
+
+        channels
+            .commands_tx
+            .send(pi_mobile_client::Command::Prompt(
+                "hello pi".to_string(),
+            ))
+            .await
+            .expect("send prompt via captured commands_tx");
+
+        let received = tokio::time::timeout(Duration::from_secs(2), events_rx.recv())
+            .await
+            .expect("typed PiEvent arrived within timeout")
+            .expect("broadcast not closed");
+
+        match received {
+            crate::pi_runtime_uniffi::PiEvent::PromptReceived { text } => {
+                assert_eq!(text, "hello pi");
+            }
+            other => panic!("expected PromptReceived, got {other:?}"),
+        }
+
         drop(session);
     }
 }

@@ -414,6 +414,76 @@ impl AppClient {
         })
     }
 
+    // ── Pi runtime prompt / event surface ───────────────────────────────
+    //
+    // The in-process pi runtime is driven through its own typed
+    // `Command`/`PiEvent` channel pair (see
+    // `pi_mobile_client::PiInProcessHandle`). Those channels are
+    // captured in `crate::pi_runtime_uniffi::PiSessionChannels` on
+    // the owning `ServerSession`; the two methods below are the
+    // typed UniFFI surface for sending user prompts in and
+    // observing typed events out.
+
+    /// Forward a user prompt into the pi runtime backing
+    /// `server_id`. Returns `PiRuntimeError::NoPiRuntime` if the
+    /// session was not started via `connect_local_pi*`, or the
+    /// channel-state errors if the runtime has shut down or its
+    /// command buffer is saturated.
+    pub fn send_pi_prompt(
+        &self,
+        server_id: String,
+        text: String,
+    ) -> Result<(), crate::pi_runtime_uniffi::PiRuntimeError> {
+        let channels = self
+            .inner
+            .pi_channels_for_server(&server_id)
+            .ok_or_else(|| {
+                crate::pi_runtime_uniffi::PiRuntimeError::NoPiRuntime {
+                    server_id: server_id.clone(),
+                }
+            })?;
+        use tokio::sync::mpsc::error::TrySendError;
+        match channels
+            .commands_tx
+            .try_send(pi_mobile_client::Command::Prompt(text))
+        {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                Err(crate::pi_runtime_uniffi::PiRuntimeError::ChannelFull)
+            }
+            Err(TrySendError::Closed(_)) => {
+                Err(crate::pi_runtime_uniffi::PiRuntimeError::Closed)
+            }
+        }
+    }
+
+    /// Subscribe to the typed `PiEvent` stream for `server_id`. The
+    /// returned `PiEventSubscription` keeps a background pump task
+    /// alive that forwards each event into `listener.on_event`;
+    /// dropping the subscription (or calling `cancel`) tears the
+    /// pump down.
+    pub fn subscribe_pi_events(
+        &self,
+        server_id: String,
+        listener: Box<dyn crate::pi_runtime_uniffi::PiEventListener>,
+    ) -> Result<
+        Arc<crate::pi_runtime_uniffi::PiEventSubscription>,
+        crate::pi_runtime_uniffi::PiRuntimeError,
+    > {
+        let channels = self
+            .inner
+            .pi_channels_for_server(&server_id)
+            .ok_or_else(|| {
+                crate::pi_runtime_uniffi::PiRuntimeError::NoPiRuntime {
+                    server_id: server_id.clone(),
+                }
+            })?;
+        let rx = channels.events_tx.subscribe();
+        Ok(crate::pi_runtime_uniffi::spawn_pi_event_pump(
+            &self.rt, rx, listener,
+        ))
+    }
+
     // ── Agent metadata cache ─────────────────────────────────────────────
     //
     // Populated whenever `list_alleycat_agents` succeeds against any

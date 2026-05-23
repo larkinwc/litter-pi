@@ -1324,6 +1324,18 @@ impl MobileClient {
         );
     }
 
+    /// Return the pi runtime control channels for `server_id`, if a
+    /// pi session is currently registered. Used by
+    /// `AppClient.send_pi_prompt` / `subscribe_pi_events`.
+    pub(crate) fn pi_channels_for_server(
+        &self,
+        server_id: &str,
+    ) -> Option<Arc<crate::pi_runtime_uniffi::PiSessionChannels>> {
+        self.sessions_read()
+            .get(server_id)
+            .and_then(|session| session.pi_channels())
+    }
+
     fn existing_active_session(&self, server_id: &str) -> Option<Arc<ServerSession>> {
         let session = self.sessions_read().get(server_id).cloned()?;
         let health_rx = session.health();

@@ -129,6 +129,7 @@
 		2DBCCE766D2356AB34EA47CF /* brand_logo.png in Resources */ = {isa = PBXBuildFile; fileRef = 17BD69B0550C63596995AC18 /* brand_logo.png */; };
 		2DF4732DBDB57688B178041E /* GhosttyTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0894A8F2B3DA66F879AEA4EE /* GhosttyTerminalView.swift */; };
 		2E6FF89E7700C83B948A1976 /* WatchChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = E002B30249FFDB3567BD8326 /* WatchChrome.swift */; };
+		2EAA8C6E04354604892CF043 /* RustPiRuntimeBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 391D75F77232F165D085E159 /* RustPiRuntimeBridge.swift */; };
 		2F28DA245F84E87318A4D7E4 /* ConversationDisplayPreferenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77969543FA36FEA8B621A3B9 /* ConversationDisplayPreferenceTests.swift */; };
 		2F94C28698B270EB04C00D65 /* BerkeleyMono-Oblique.otf in Resources */ = {isa = PBXBuildFile; fileRef = ACD06DF72574CDDF16E1E41B /* BerkeleyMono-Oblique.otf */; };
 		2FEF13A44B76BF75E18632B7 /* SessionReplySwipe.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0BEC32BA18EED58DFB1D9D7 /* SessionReplySwipe.swift */; };
@@ -401,6 +402,7 @@
 		96BDDDF704BD88C70063E938 /* PiPContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BFD13DFBBDC17261EAD5E62 /* PiPContentView.swift */; };
 		97418466F7D49CEA8BA1E6A3 /* TipJarProducts.storekit in Resources */ = {isa = PBXBuildFile; fileRef = 3AF1303B192D17E47D3F9183 /* TipJarProducts.storekit */; };
 		97715C1B8B9FF369686FE9B3 /* PairBLEScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 478418E5A888D2A8494C9725 /* PairBLEScanner.swift */; };
+		97750B3E4DE02DE7436DD872 /* RustPiRuntimeBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 391D75F77232F165D085E159 /* RustPiRuntimeBridge.swift */; };
 		979A1AC18642D78FFE1F199E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 35949923355BB19A7209FD65 /* Assets.xcassets */; };
 		979CFFCECF555EC128174A2F /* LitterRunningTurnPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C65B428C64E23550B2F0A5F /* LitterRunningTurnPayload.swift */; };
 		97C14B0FC047354B0B4B03B1 /* WatchDeepLinkRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C8EDED60CA4813F9382FD0E /* WatchDeepLinkRouter.swift */; };
@@ -840,6 +842,7 @@
 		370F75B42793F9B35D8F4990 /* pierre-dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "pierre-dark.json"; sourceTree = "<group>"; };
 		3759125C1ED21FC24EE5C644 /* AmbientSuggestionsList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmbientSuggestionsList.swift; sourceTree = "<group>"; };
 		37F784707298B3B10132B107 /* cat_transmission_02.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = cat_transmission_02.png; sourceTree = "<group>"; };
+		391D75F77232F165D085E159 /* RustPiRuntimeBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RustPiRuntimeBridge.swift; sourceTree = "<group>"; };
 		39FB2858173D01F79A8F2368 /* ServerSelectionIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerSelectionIntent.swift; sourceTree = "<group>"; };
 		3AF1303B192D17E47D3F9183 /* TipJarProducts.storekit */ = {isa = PBXFileReference; path = TipJarProducts.storekit; sourceTree = "<group>"; };
 		3BA392F9C2104B8B643C0F9E /* ToolCallCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolCallCardView.swift; sourceTree = "<group>"; };
@@ -1757,6 +1760,7 @@
 				E0CB9BD7FEC41759BD42861A /* GhosttyRendererBackendBridge.swift */,
 				34E814DFE71DB7B6A64B7B3A /* MessageContentBridge.swift */,
 				93CDBDD02E344E7C903D5DEC /* RustAlleycatBridge.swift */,
+				391D75F77232F165D085E159 /* RustPiRuntimeBridge.swift */,
 				8872A0620A38EB5307BC098C /* RustVoiceHandoff.swift */,
 				782D870FCEA68BB3752F965F /* SwiftSshCredentialProvider.swift */,
 				34FD98644D715736EB96DF24 /* SwiftSshTrustBackend.swift */,
@@ -2450,6 +2454,7 @@
 				D512CAC21DF746FA702B10EF /* RecentDirectoryStore.swift in Sources */,
 				DD0C22B502190804EC15BFE7 /* RollingMetricText.swift in Sources */,
 				6DE00D539BF6F92533A4D8C4 /* RustAlleycatBridge.swift in Sources */,
+				97750B3E4DE02DE7436DD872 /* RustPiRuntimeBridge.swift in Sources */,
 				3AEBEBB2C0A6483A4E7D62F0 /* RustVoiceHandoff.swift in Sources */,
 				7E5C8BA5FF30E30E8196E59E /* SSHAgentPickerSheet.swift in Sources */,
 				04743D5A1900185832682235 /* SSHLoginSheet.swift in Sources */,
@@ -2643,6 +2648,7 @@
 				ACDDA0682624D4EB1F24618E /* RecentDirectoryStore.swift in Sources */,
 				E2D03F494483EBB561B47785 /* RollingMetricText.swift in Sources */,
 				A91B73BD99881AF4EF7388BE /* RustAlleycatBridge.swift in Sources */,
+				2EAA8C6E04354604892CF043 /* RustPiRuntimeBridge.swift in Sources */,
 				9F41A81BE23B68CA2F74BFE4 /* RustVoiceHandoff.swift in Sources */,
 				9A2B73D29CDB5CFEC9AEC2CB /* SSHAgentPickerSheet.swift in Sources */,
 				59C4E5052033416829304E7E /* SSHLoginSheet.swift in Sources */,

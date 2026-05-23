@@ -193,6 +193,14 @@ impl PiInProcessHandle {
         self.events_tx.subscribe()
     }
 
+    /// Clone the inbound `Command` sender. The session worker in
+    /// `codex-mobile-client` retains this clone so callers can forward
+    /// user prompts into the runtime after the handle has been moved
+    /// into the worker task.
+    pub fn commands_sender(&self) -> tokio::sync::mpsc::Sender<Command> {
+        self.commands_tx.clone()
+    }
+
     /// Returns `true` once the bridge worker's cancel sentinel has been
     /// flipped. Useful for asserting cancel-correctness in tests.
     #[doc(hidden)]

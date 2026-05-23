@@ -176,6 +176,7 @@ pub mod pair;
 pub mod parser;
 pub mod permissions;
 pub mod pets;
+pub mod pi_runtime_uniffi;
 pub mod plugin_refs;
 pub mod preferences;
 pub mod project;
