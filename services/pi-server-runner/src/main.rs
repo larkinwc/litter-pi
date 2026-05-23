@@ -28,10 +28,20 @@
 //!
 //! * `ANTHROPIC_API_KEY` — selects the Anthropic provider when no
 //!   `--provider` is supplied.
+//! * `ANTHROPIC_BASE_URL` — optional custom Anthropic-compatible
+//!   endpoint (e.g. a BYOK proxy). Forwarded into
+//!   `PiSessionConfig.base_url` when the active provider is
+//!   `anthropic`.
 //! * `OPENAI_API_KEY` + `OPENAI_BASE_URL` — fall back to the OpenAI-
-//!   compatible provider. `OPENAI_BASE_URL` is forwarded into the
-//!   process environment before pi spawns its runtime so a custom
-//!   endpoint can be selected. OAuth lands in a later milestone.
+//!   compatible provider. `OPENAI_BASE_URL` is forwarded into
+//!   `PiSessionConfig.base_url` when the active provider is
+//!   `openai` (or any non-`anthropic` provider). OAuth lands in a
+//!   later milestone.
+//!
+//! Base-URL precedence: the env var matching the *active* provider
+//! wins. If both `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL` are set
+//! and `--provider anthropic` is used, the Anthropic URL is applied;
+//! the OpenAI URL is ignored (and vice versa).
 
 use std::io::Read as _;
 use std::process::ExitCode;
@@ -133,28 +143,28 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
 
-    // BYOK base-url plumbing must happen here, on the still-single-
-    // threaded main thread, because Rust 2024 marks
-    // `std::env::set_var` as `unsafe` and `pi-mobile-client` is
-    // `#![forbid(unsafe_code)]`. Reading the value is safe.
-    let openai_base_url = std::env::var("OPENAI_BASE_URL").ok();
-    let anthropic_key = std::env::var("ANTHROPIC_API_KEY").ok();
-    let openai_key = std::env::var("OPENAI_API_KEY").ok();
+    // BYOK env plumbing happens here, on the still-single-threaded
+    // main thread. Reading env vars is safe; `pi-mobile-client` is
+    // `#![forbid(unsafe_code)]` so it cannot do this internally.
+    let env = ProviderEnv {
+        anthropic_key: std::env::var("ANTHROPIC_API_KEY").ok(),
+        anthropic_base_url: std::env::var("ANTHROPIC_BASE_URL").ok(),
+        openai_key: std::env::var("OPENAI_API_KEY").ok(),
+        openai_base_url: std::env::var("OPENAI_BASE_URL").ok(),
+    };
 
-    // Pick provider / api_key from env if not overridden on the CLI.
-    let (provider, api_key) = match (cli.provider.clone(), &anthropic_key, &openai_key) {
-        (Some(p), _, _) if p == "anthropic" => (Some(p), anthropic_key.clone()),
-        (Some(p), _, _) if p == "openai" => (Some(p), openai_key.clone()),
-        (Some(p), _, _) => (Some(p), anthropic_key.clone().or(openai_key.clone())),
-        (None, Some(_), _) => (Some("anthropic".to_string()), anthropic_key.clone()),
-        (None, None, Some(_)) => (Some("openai".to_string()), openai_key.clone()),
-        (None, None, None) => {
-            eprintln!(
-                "pi-server-runner: no BYOK credentials in environment. Export ANTHROPIC_API_KEY or OPENAI_API_KEY (+ optional OPENAI_BASE_URL)."
-            );
+    let resolved = match resolve_provider(cli.provider.clone(), &env) {
+        Ok(r) => r,
+        Err(err) => {
+            eprintln!("pi-server-runner: {err}");
             return ExitCode::from(2);
         }
     };
+    let ResolvedProvider {
+        provider,
+        api_key,
+        base_url,
+    } = resolved;
 
     let prompt_text = match resolve_prompt(&cli) {
         Ok(p) => p,
@@ -168,7 +178,7 @@ fn main() -> ExitCode {
         provider,
         model: cli.model.clone(),
         api_key,
-        base_url: openai_base_url,
+        base_url,
         working_directory: std::env::current_dir().ok(),
         append_system_prompt: None,
         max_tool_iterations: None,
@@ -329,9 +339,179 @@ fn render(event: PiEvent) -> (TranscriptLine, Terminal) {
     }
 }
 
+/// Snapshot of BYOK-relevant env vars, captured up-front so the
+/// provider/base-url decision is a pure function of inputs (and
+/// trivially testable without touching process env).
+#[derive(Debug, Default, Clone)]
+struct ProviderEnv {
+    anthropic_key: Option<String>,
+    anthropic_base_url: Option<String>,
+    openai_key: Option<String>,
+    openai_base_url: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ResolvedProvider {
+    provider: Option<String>,
+    api_key: Option<String>,
+    base_url: Option<String>,
+}
+
+/// Choose provider, API key, and base URL from the CLI flag plus env.
+///
+/// Rules:
+/// * `--provider anthropic` → Anthropic key + `ANTHROPIC_BASE_URL`.
+/// * `--provider openai` → OpenAI key + `OPENAI_BASE_URL`.
+/// * Any other explicit provider → prefer Anthropic key, fall back to
+///   OpenAI key; no base URL is inferred (caller's env was custom).
+/// * No `--provider`: pick Anthropic if its key is set, else OpenAI;
+///   the matching `*_BASE_URL` is applied.
+/// * No keys at all → error.
+///
+/// When both base-URL vars are set, the one matching the *active*
+/// provider wins (provider-specific override).
+fn resolve_provider(
+    cli_provider: Option<String>,
+    env: &ProviderEnv,
+) -> Result<ResolvedProvider, String> {
+    let (provider, api_key, base_url) = match (cli_provider, &env.anthropic_key, &env.openai_key) {
+        (Some(p), _, _) if p == "anthropic" => (
+            Some(p),
+            env.anthropic_key.clone(),
+            env.anthropic_base_url.clone(),
+        ),
+        (Some(p), _, _) if p == "openai" => (
+            Some(p),
+            env.openai_key.clone(),
+            env.openai_base_url.clone(),
+        ),
+        (Some(p), _, _) => (
+            Some(p),
+            env.anthropic_key.clone().or_else(|| env.openai_key.clone()),
+            None,
+        ),
+        (None, Some(_), _) => (
+            Some("anthropic".to_string()),
+            env.anthropic_key.clone(),
+            env.anthropic_base_url.clone(),
+        ),
+        (None, None, Some(_)) => (
+            Some("openai".to_string()),
+            env.openai_key.clone(),
+            env.openai_base_url.clone(),
+        ),
+        (None, None, None) => {
+            return Err(
+                "no BYOK credentials in environment. Export ANTHROPIC_API_KEY (+ optional ANTHROPIC_BASE_URL) or OPENAI_API_KEY (+ optional OPENAI_BASE_URL).".to_string(),
+            );
+        }
+    };
+    Ok(ResolvedProvider {
+        provider,
+        api_key,
+        base_url,
+    })
+}
+
 fn emit_line(line: &TranscriptLine) {
     match serde_json::to_string(line) {
         Ok(json) => println!("{json}"),
         Err(err) => eprintln!("pi-server-runner: failed to serialize transcript line: {err}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env_with(
+        anth_key: Option<&str>,
+        anth_base: Option<&str>,
+        oa_key: Option<&str>,
+        oa_base: Option<&str>,
+    ) -> ProviderEnv {
+        ProviderEnv {
+            anthropic_key: anth_key.map(str::to_string),
+            anthropic_base_url: anth_base.map(str::to_string),
+            openai_key: oa_key.map(str::to_string),
+            openai_base_url: oa_base.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn anthropic_provider_picks_up_anthropic_base_url() {
+        let env = env_with(
+            Some("sk-ant-test"),
+            Some("https://anthropic.proxy.example/v1"),
+            None,
+            None,
+        );
+        let resolved =
+            resolve_provider(Some("anthropic".to_string()), &env).expect("provider resolves");
+        assert_eq!(resolved.provider.as_deref(), Some("anthropic"));
+        assert_eq!(resolved.api_key.as_deref(), Some("sk-ant-test"));
+        assert_eq!(
+            resolved.base_url.as_deref(),
+            Some("https://anthropic.proxy.example/v1")
+        );
+    }
+
+    #[test]
+    fn openai_provider_picks_up_openai_base_url_and_ignores_anthropic_url() {
+        let env = env_with(
+            Some("sk-ant-test"),
+            Some("https://anthropic.proxy.example/v1"),
+            Some("sk-oa-test"),
+            Some("https://oa.proxy.example/v1"),
+        );
+        let resolved =
+            resolve_provider(Some("openai".to_string()), &env).expect("provider resolves");
+        assert_eq!(resolved.provider.as_deref(), Some("openai"));
+        assert_eq!(resolved.api_key.as_deref(), Some("sk-oa-test"));
+        assert_eq!(
+            resolved.base_url.as_deref(),
+            Some("https://oa.proxy.example/v1")
+        );
+    }
+
+    #[test]
+    fn anthropic_provider_with_both_base_urls_prefers_anthropic() {
+        let env = env_with(
+            Some("sk-ant-test"),
+            Some("https://anthropic.proxy.example/v1"),
+            Some("sk-oa-test"),
+            Some("https://oa.proxy.example/v1"),
+        );
+        let resolved =
+            resolve_provider(Some("anthropic".to_string()), &env).expect("provider resolves");
+        assert_eq!(
+            resolved.base_url.as_deref(),
+            Some("https://anthropic.proxy.example/v1"),
+            "ANTHROPIC_BASE_URL must win when --provider anthropic is active"
+        );
+    }
+
+    #[test]
+    fn default_provider_uses_anthropic_when_only_anth_key_present() {
+        let env = env_with(Some("sk-ant"), Some("https://anth.example"), None, None);
+        let resolved = resolve_provider(None, &env).expect("provider resolves");
+        assert_eq!(resolved.provider.as_deref(), Some("anthropic"));
+        assert_eq!(resolved.base_url.as_deref(), Some("https://anth.example"));
+    }
+
+    #[test]
+    fn default_provider_uses_openai_when_only_oa_key_present() {
+        let env = env_with(None, None, Some("sk-oa"), Some("https://oa.example"));
+        let resolved = resolve_provider(None, &env).expect("provider resolves");
+        assert_eq!(resolved.provider.as_deref(), Some("openai"));
+        assert_eq!(resolved.base_url.as_deref(), Some("https://oa.example"));
+    }
+
+    #[test]
+    fn no_keys_returns_error() {
+        let env = env_with(None, None, None, None);
+        let err = resolve_provider(None, &env).expect_err("must error with no creds");
+        assert!(err.contains("ANTHROPIC_API_KEY"));
+        assert!(err.contains("OPENAI_API_KEY"));
     }
 }
