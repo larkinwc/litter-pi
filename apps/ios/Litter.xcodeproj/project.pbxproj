@@ -671,6 +671,7 @@
 		FD25F0AF6D86B350689A86CB /* kanagawa-wave.json in Resources */ = {isa = PBXBuildFile; fileRef = 64C8CA93B134E2C4486B86A1 /* kanagawa-wave.json */; };
 		FE3764D045C51C2313EDD24B /* OnboardingCoachmarks.swift in Sources */ = {isa = PBXBuildFile; fileRef = A71F4E34844D8B42B4D170F9 /* OnboardingCoachmarks.swift */; };
 		FE7F588352FF00362744FAD4 /* github-dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 87E1D2E7E6CB4DA678C6605E /* github-dark.json */; };
+		FEF19CDBB6F5FBB0DF2837A1 /* ConnectLocalPiTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE95870894DFE2A7006A0EF7 /* ConnectLocalPiTests.swift */; };
 		FF309C81AC29180713E1AF4F /* lobster-dark-dxSKfHK-.json in Resources */ = {isa = PBXBuildFile; fileRef = 64A9C3848F4142EF67DD23D3 /* lobster-dark-dxSKfHK-.json */; };
 		FF4D813592AD383AD342CFFB /* NetworkDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2C54AE62D2865D1C7750F7A /* NetworkDiscovery.swift */; };
 		FFCA1D459F3A63EC8018FE25 /* SshSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B787E25986494D2FBEFD2FF /* SshSessionStore.swift */; };
@@ -1062,6 +1063,7 @@
 		CB972757270C09470E490121 /* EndVoiceSessionIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndVoiceSessionIntent.swift; sourceTree = "<group>"; };
 		CC23186BC2EA0520D9532ED3 /* AppThreadSnapshot+Runtime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppThreadSnapshot+Runtime.swift"; sourceTree = "<group>"; };
 		CD02327C52F16587C973B70F /* ConversationWarmupCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationWarmupCoordinator.swift; sourceTree = "<group>"; };
+		CE95870894DFE2A7006A0EF7 /* ConnectLocalPiTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectLocalPiTests.swift; sourceTree = "<group>"; };
 		CFF9DBA865CCBB3308B5667D /* light-plus.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "light-plus.json"; sourceTree = "<group>"; };
 		D0453F9A958E06582AE93013 /* DiffRendering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffRendering.swift; sourceTree = "<group>"; };
 		D0B91C694EA050F1FE6738A7 /* ThemeDefinitionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeDefinitionTests.swift; sourceTree = "<group>"; };
@@ -1227,6 +1229,7 @@
 				49496FAE8491262D2C8CC657 /* AppSnapshotRuntimeTests.swift */,
 				F3474B8EA8D3148C94A7583F /* AppStatePermissionTests.swift */,
 				33402D8F29D5CAA2DD07ED9F /* ChatGPTOAuthTests.swift */,
+				CE95870894DFE2A7006A0EF7 /* ConnectLocalPiTests.swift */,
 				347FEEBE4E54174740D93E9D /* ConversationAttachmentSupportTests.swift */,
 				77969543FA36FEA8B621A3B9 /* ConversationDisplayPreferenceTests.swift */,
 				B0C1A0569B4424123A37B0DA /* ConversationPlanSemanticsTests.swift */,
@@ -2238,6 +2241,7 @@
 				D24451D266FD2443C0D7CBC4 /* AppSnapshotRuntimeTests.swift in Sources */,
 				620FC2343DCFADD1034E9CCB /* AppStatePermissionTests.swift in Sources */,
 				46C5F0B53F9EF54FE8F311A4 /* ChatGPTOAuthTests.swift in Sources */,
+				FEF19CDBB6F5FBB0DF2837A1 /* ConnectLocalPiTests.swift in Sources */,
 				46B24CBC2FD5FD3799BE207D /* ConversationAttachmentSupportTests.swift in Sources */,
 				2F28DA245F84E87318A4D7E4 /* ConversationDisplayPreferenceTests.swift in Sources */,
 				9C44ABDBA2399DD2C0B1E9E2 /* ConversationPlanSemanticsTests.swift in Sources */,

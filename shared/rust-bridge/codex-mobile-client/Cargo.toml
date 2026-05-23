@@ -28,6 +28,7 @@ codex-git-utils = { workspace = true }
 codex-feedback = { workspace = true }
 codex-arg0 = { workspace = true }
 alleycat-bridge-core = { workspace = true }
+pi-mobile-client = { path = "../pi-mobile-client" }
 alleycat-pi-bridge = { workspace = true }
 alleycat-claude-bridge = { workspace = true }
 alleycat-opencode-bridge = { workspace = true }

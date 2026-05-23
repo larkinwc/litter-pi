@@ -17,7 +17,54 @@ use tracing::{debug, info, warn};
 
 use crate::session::remote_transport::{Reconnected, RemoteTransport, SessionKeepalive};
 use crate::transport::TransportError;
-use crate::types::AgentRuntimeKind;
+use crate::types::AgentRuntimeKind as AgentRuntimeKindId;
+
+/// Typed enum form of the canonical runtime kinds litter knows about. The
+/// stringly-typed [`crate::types::AgentRuntimeKind`] remains the public
+/// boundary type used across UniFFI (so new alleycat-advertised agents work
+/// without a litter release), but features that need typed pattern-matching
+/// — e.g. wiring an in-process pi runtime — go through this enum.
+///
+/// `serde` round-trips through the canonical lowercase id (`"codex"`,
+/// `"pi"`, `"claude"`, …), matching the stringly-typed boundary value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AgentRuntimeKind {
+    #[serde(rename = "codex")]
+    Codex,
+    #[serde(rename = "pi")]
+    Pi,
+    #[serde(rename = "amp")]
+    Amp,
+    #[serde(rename = "opencode")]
+    Opencode,
+    #[serde(rename = "claude")]
+    Claude,
+    #[serde(rename = "droid")]
+    Droid,
+    #[serde(rename = "hermes")]
+    Hermes,
+}
+
+impl AgentRuntimeKind {
+    /// Stable lowercase id (matches the `serde` rename) used for the
+    /// stringly-typed UniFFI boundary value.
+    pub fn as_id(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::Pi => "pi",
+            Self::Amp => "amp",
+            Self::Opencode => "opencode",
+            Self::Claude => "claude",
+            Self::Droid => "droid",
+            Self::Hermes => "hermes",
+        }
+    }
+
+    /// Convert to the stringly-typed boundary id.
+    pub fn into_id(self) -> AgentRuntimeKindId {
+        self.as_id().to_owned()
+    }
+}
 
 pub const ALLEYCAT_PROTOCOL_VERSION: u32 = 1;
 pub const ALLEYCAT_ALPN: &[u8] = b"alleycat/1";
@@ -74,7 +121,7 @@ pub struct AgentCapabilities {
 /// stable ids. Anything else falls through to the agent's own
 /// lowercased name (or display name if name is empty), so new agents
 /// advertised by alleycat work without a litter release.
-pub fn agent_runtime_kind(name: &str, display_name: &str) -> Option<AgentRuntimeKind> {
+pub fn agent_runtime_kind(name: &str, display_name: &str) -> Option<AgentRuntimeKindId> {
     let name = name.trim().to_ascii_lowercase();
     let display_name = display_name.trim().to_ascii_lowercase();
     let candidate = if name.is_empty() {
@@ -1068,5 +1115,22 @@ mod tests {
     #[allow(dead_code)]
     fn alleycat_reconnect_transport_coerces_to_trait_object(transport: AlleycatReconnectTransport) {
         let _erased: Arc<dyn RemoteTransport> = Arc::new(transport);
+    }
+
+    #[test]
+    fn agent_runtime_kind_pi_roundtrip() {
+        let json = serde_json::to_value(AgentRuntimeKind::Pi).expect("serialize");
+        assert_eq!(json, serde_json::json!("pi"));
+
+        let parsed: AgentRuntimeKind = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(parsed, AgentRuntimeKind::Pi);
+
+        // The typed enum must align with the canonicalized stringly-typed
+        // id produced by `agent_runtime_kind()` for the same agent names.
+        assert_eq!(AgentRuntimeKind::Pi.as_id(), "pi");
+        assert_eq!(
+            agent_runtime_kind("pi", "pi"),
+            Some(AgentRuntimeKind::Pi.into_id())
+        );
     }
 }

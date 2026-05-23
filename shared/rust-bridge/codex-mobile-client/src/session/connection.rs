@@ -804,6 +804,103 @@ impl ServerSession {
         })
     }
 
+    /// Connect to a local (in-process) pi runtime.
+    ///
+    /// Delegates to [`pi_mobile_client::start_in_process`] for the
+    /// dedicated asupersync OS thread + tokio channel bridge, then
+    /// drives the resulting `PiInProcessHandle` through the same
+    /// `ServerEvent` broadcast surface as the codex in-process path so
+    /// the rest of the mobile stack stays runtime-agnostic.
+    ///
+    /// Today the inbound `SessionCommand` plumbing is wired through but
+    /// pi does not yet speak codex's JSON-RPC shape; concrete request
+    /// translation lands in follow-up features. The shutdown path
+    /// already drops the pi handle, which in turn signals pi's
+    /// asupersync runtime to cancel in-flight work.
+    pub async fn connect_local_pi(config: ServerConfig) -> Result<Self, TransportError> {
+        use pi_mobile_client::{InProcessStartArgs as PiInProcessStartArgs, start_in_process};
+
+        let (health_tx, health_rx) = watch::channel(ConnectionHealth::Connecting {
+            attempt: 1,
+            max_attempts: 1,
+        });
+
+        let pi_handle = start_in_process(PiInProcessStartArgs::default());
+        let mut pi_events = pi_handle.subscribe();
+
+        let (event_tx, _) = broadcast::channel::<ServerEvent>(256);
+        let (command_tx, mut command_rx) = mpsc::channel::<SessionCommand>(256);
+        let evt_tx = event_tx.clone();
+
+        let worker_handle = tokio::spawn(async move {
+            // Keep the pi runtime handle alive for the lifetime of this
+            // worker. Dropping it on exit signals pi's asupersync runtime
+            // to shut down (see `pi_mobile_client::PiInProcessHandle`).
+            let _pi_handle = pi_handle;
+            loop {
+                tokio::select! {
+                    command = command_rx.recv() => {
+                        let Some(command) = command else { break; };
+                        match command {
+                            SessionCommand::Request { response_tx, .. } => {
+                                // Codex JSON-RPC shape is not yet wired
+                                // through pi. Reject so callers see a
+                                // clear transport error rather than a
+                                // silent hang. Follow-up features
+                                // populate this branch.
+                                let _ = response_tx.send(Err(RpcError::Transport(
+                                    TransportError::SendFailed(
+                                        "pi runtime does not yet handle JSON-RPC requests"
+                                            .to_string(),
+                                    ),
+                                )));
+                            }
+                            SessionCommand::Notify { response_tx, .. } => {
+                                let _ = response_tx.send(Ok(()));
+                            }
+                            SessionCommand::Resolve { response_tx, .. } => {
+                                let _ = response_tx.send(Ok(()));
+                            }
+                            SessionCommand::Reject { response_tx, .. } => {
+                                let _ = response_tx.send(Ok(()));
+                            }
+                            SessionCommand::Shutdown => break,
+                        }
+                    }
+                    event = pi_events.recv() => {
+                        match event {
+                            Ok(event) => route_pi_event(&evt_tx, event),
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                                warn!("pi in-process event: lagged, skipped {skipped} events");
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
+                }
+            }
+            debug!("pi in-process session worker exited");
+        });
+
+        let _ = health_tx.send(ConnectionHealth::Connected);
+        info!(
+            "local pi server session connected: {}",
+            config.display_name
+        );
+
+        Ok(Self {
+            config,
+            health_tx,
+            health_rx,
+            command_tx,
+            runtime_command_txs: std::collections::HashMap::new(),
+            runtime_transports: Vec::new(),
+            event_tx,
+            ssh_client: None,
+            ssh_pid: None,
+            worker_handle,
+        })
+    }
+
     /// Connect to a remote Codex server via plain WebSocket.
     ///
     /// Uses the upstream `RemoteAppServerClient` which handles the
@@ -1769,6 +1866,43 @@ fn route_app_server_event(
     }
 }
 
+/// Translate a [`pi_mobile_client::PiEvent`] into the unified
+/// [`ServerEvent`] broadcast surface used by the rest of the mobile
+/// stack. The translation tags every emission with the canonical
+/// `"pi"` runtime kind so consumers can route by agent without
+/// peeking at the event payload.
+///
+/// Today `PiEvent` only carries lifecycle markers (`PromptReceived`,
+/// `ShuttingDown`); concrete JSON-RPC notifications/requests land
+/// after pi's RPC adapter is wired up. We surface the lifecycle
+/// markers as `LegacyNotification`s so callers can observe them via
+/// the existing event subscription path while the typed notification
+/// translation matures.
+fn route_pi_event(
+    event_tx: &broadcast::Sender<ServerEvent>,
+    event: pi_mobile_client::PiEvent,
+) {
+    use pi_mobile_client::PiEvent;
+
+    let runtime_kind = crate::alleycat::AgentRuntimeKind::Pi.into_id();
+    match event {
+        PiEvent::PromptReceived { text } => {
+            let _ = event_tx.send(ServerEvent::LegacyNotification {
+                runtime_kind,
+                method: "pi/promptReceived".to_string(),
+                params: serde_json::json!({ "text": text }),
+            });
+        }
+        PiEvent::ShuttingDown => {
+            let _ = event_tx.send(ServerEvent::LegacyNotification {
+                runtime_kind,
+                method: "pi/shuttingDown".to_string(),
+                params: serde_json::Value::Null,
+            });
+        }
+    }
+}
+
 fn route_in_process_event(
     event_tx: &broadcast::Sender<ServerEvent>,
     event: codex_app_server::in_process::InProcessServerEvent,
@@ -2567,5 +2701,24 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(codex_home);
+    }
+
+    #[tokio::test]
+    async fn connect_local_pi_returns_session_and_routes_events() {
+        let config = ServerConfig {
+            server_id: "pi-local".to_string(),
+            display_name: "Local pi".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            websocket_url: None,
+            is_local: true,
+            tls: false,
+        };
+
+        let session = ServerSession::connect_local_pi(config)
+            .await
+            .expect("connect_local_pi succeeds");
+        assert_eq!(session.config.server_id, "pi-local");
+        drop(session);
     }
 }

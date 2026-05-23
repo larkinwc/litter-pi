@@ -302,6 +302,43 @@ impl AppClient {
         }
     }
 
+    // ── Local pi runtime ────────────────────────────────────────────────
+    //
+    // Boots an in-process pi runtime through `pi-mobile-client` and
+    // wires it into the same `ServerEvent` broadcast surface as the
+    // codex in-process path. Returns the server id of the resulting
+    // session so platform callers can hand it to the rest of the API
+    // (`start_thread`, event subscription, etc.) unchanged. Mirrors
+    // `ServerBridge::connect_local_server` but lives on `AppClient`
+    // because pi sessions are addressed alongside other agent-runtime
+    // operations rather than via the discovery/server bridge.
+
+    /// Start an in-process pi runtime and register the resulting
+    /// `ServerSession` with `MobileClient`. The returned string is the
+    /// caller-supplied `server_id`; future API calls keyed by that id
+    /// route through the pi runtime in the same way they do for codex
+    /// in-process sessions.
+    pub async fn connect_local_pi(
+        &self,
+        server_id: String,
+        display_name: String,
+    ) -> Result<String, ClientError> {
+        let config = crate::session::connection::ServerConfig {
+            server_id,
+            display_name,
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            websocket_url: None,
+            is_local: true,
+            tls: false,
+        };
+        blocking_async!(self.rt, self.inner, |c| {
+            c.connect_local_pi(config)
+                .await
+                .map_err(|e| ClientError::Transport(e.to_string()))
+        })
+    }
+
     // ── Agent metadata cache ─────────────────────────────────────────────
     //
     // Populated whenever `list_alleycat_agents` succeeds against any

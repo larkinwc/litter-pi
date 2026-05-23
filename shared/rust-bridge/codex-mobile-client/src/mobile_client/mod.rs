@@ -1401,6 +1401,35 @@ impl MobileClient {
         Ok(server_id)
     }
 
+    /// Connect to a local (in-process) pi runtime.
+    ///
+    /// Mirrors [`Self::connect_local`] but routes through
+    /// [`ServerSession::connect_local_pi`], which delegates to
+    /// `pi-mobile-client::start_in_process` and pipes pi's `PiEvent`
+    /// stream into the existing `ServerEvent` channel.
+    pub async fn connect_local_pi(
+        &self,
+        config: ServerConfig,
+    ) -> Result<String, TransportError> {
+        let server_id = config.server_id.clone();
+        if self.existing_active_session(server_id.as_str()).is_some() {
+            info!("MobileClient: reusing existing local pi session {server_id}");
+            return Ok(server_id);
+        }
+        self.replace_existing_session(server_id.as_str()).await;
+        let session = Arc::new(ServerSession::connect_local_pi(config).await?);
+        self.app_store
+            .upsert_server(session.config(), ServerHealthSnapshot::Connected);
+
+        self.sessions_write()
+            .insert(server_id.clone(), Arc::clone(&session));
+        self.spawn_event_reader(server_id.clone(), Arc::clone(&session));
+        self.spawn_health_reader(server_id.clone(), Arc::clone(&session));
+
+        info!("MobileClient: connected local pi server {server_id}");
+        Ok(server_id)
+    }
+
     /// Connect to a remote Codex server via WebSocket.
     ///
     /// Returns the `server_id` from the config on success.

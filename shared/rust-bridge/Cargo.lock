@@ -3339,6 +3339,7 @@ dependencies = [
  "lru 0.12.5",
  "ndk-context",
  "openssl-sys",
+ "pi-mobile-client",
  "portable-pty",
  "regex",
  "reqwest 0.12.28",
