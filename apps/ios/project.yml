@@ -393,13 +393,54 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - path: Tests/LitterTests
+        excludes:
+          - "README.md"
     dependencies:
       - target: Litter
+    # When ENABLE_PI_TEST_INJECTION=YES is set in the build environment
+    # (e.g. `xcodebuild test ENABLE_PI_TEST_INJECTION=YES ...` or by
+    # exporting it before launching Xcode), rebuild the simulator
+    # staticlib with the `test-injection` cargo feature on so that
+    # `AppClient.connectLocalPiByokWithIshExec`, `piActiveBaseUrl`,
+    # and the `PiIshExec` callback interface are visible to the
+    # PiByokE2ETests harness. When the flag is absent or set to
+    # anything else the script is a no-op, keeping the production
+    # simulator lane (`make rust-ios-sim-fast`) authoritative.
+    preBuildScripts:
+      - name: "Pi test-injection rebuild (opt-in)"
+        basedOnDependencyAnalysis: false
+        runOnlyWhenInstalling: false
+        shell: /bin/bash
+        script: |
+          set -euo pipefail
+          if [ "${ENABLE_PI_TEST_INJECTION:-NO}" != "YES" ]; then
+            echo "ENABLE_PI_TEST_INJECTION not set; skipping test-injection Rust rebuild."
+            exit 0
+          fi
+          echo "ENABLE_PI_TEST_INJECTION=YES; rebuilding Rust simulator staticlib with test-injection feature."
+          cd "$SRCROOT/../.."
+          make rust-ios-sim-test-injection
     settings:
       base:
         GENERATE_INFOPLIST_FILE: true
         CODE_SIGNING_ALLOWED: false
         CODE_SIGNING_REQUIRED: false
+        # `PI_TEST_INJECTION` Swift compile flag gates the
+        # PiByokE2ETests harness so the file compiles cleanly when
+        # the test-injection cargo feature is OFF (which would
+        # otherwise leave symbols like `connectLocalPiByokWithIshExec`
+        # missing from the generated UniFFI Swift surface). Define
+        # `ENABLE_PI_TEST_INJECTION=YES` in the build environment to
+        # opt in; the preBuildScripts entry above handles the Rust
+        # rebuild side.
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) $(PI_TEST_INJECTION_CONDITION)"
+        PI_TEST_INJECTION_CONDITION: ""
+      configs:
+        Debug:
+          PI_TEST_INJECTION_CONDITION: "$(PI_TEST_INJECTION_CONDITION_$(ENABLE_PI_TEST_INJECTION))"
+          PI_TEST_INJECTION_CONDITION_YES: "PI_TEST_INJECTION"
+          PI_TEST_INJECTION_CONDITION_NO: ""
+          PI_TEST_INJECTION_CONDITION_: ""
   LitterUITests:
     type: bundle.ui-testing
     platform: iOS

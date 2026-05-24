@@ -60,6 +60,7 @@
 		15378E713092362B622ADF95 /* BerkeleyMono-Bold-Oblique.otf in Resources */ = {isa = PBXBuildFile; fileRef = 3CB07F43FD670F05B9A43C55 /* BerkeleyMono-Bold-Oblique.otf */; };
 		156F89639E8053C53F00A37E /* cat_transmission_05.png in Resources */ = {isa = PBXBuildFile; fileRef = ACB40989C3523BA263AD8F03 /* cat_transmission_05.png */; };
 		15A9B5853E6712B0244CDB72 /* IshFS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B2BFE640367D986B437735F /* IshFS.swift */; };
+		168B355D4745A558DD13FA1F /* PiByokE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFF086A1DC9BE1E5BD328084 /* PiByokE2ETests.swift */; };
 		1690546C70153C5444B92A7A /* PiByokSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9AA0CC105169C111D0883DE /* PiByokSettingsView.swift */; };
 		17033989C6AC46E5A7D52FF4 /* HomeModelChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3994BDBDC27E3555A77466B /* HomeModelChip.swift */; };
 		1826E3705168EF9BD2E823A9 /* TipJarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FAF7AE3EEBD36B367083892 /* TipJarView.swift */; };
@@ -1029,6 +1030,7 @@
 		AE86DDCDD1BEC770EAE330A9 /* cat_transmission_03.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = cat_transmission_03.png; sourceTree = "<group>"; };
 		AEFDEDEF73BC5E33C2F2E3B1 /* AppSpecificTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSpecificTypes.swift; sourceTree = "<group>"; };
 		AF409B64E0082FC6B68379EA /* dracula-soft.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "dracula-soft.json"; sourceTree = "<group>"; };
+		AFF086A1DC9BE1E5BD328084 /* PiByokE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiByokE2ETests.swift; sourceTree = "<group>"; };
 		B0648D501D363553E86BAE63 /* BerkeleyMono-Regular.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "BerkeleyMono-Regular.otf"; sourceTree = "<group>"; };
 		B06FAE2DA1D08C45531747A2 /* WatchApprovalNotification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchApprovalNotification.swift; sourceTree = "<group>"; };
 		B0C1A0569B4424123A37B0DA /* ConversationPlanSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationPlanSemanticsTests.swift; sourceTree = "<group>"; };
@@ -1259,6 +1261,7 @@
 				119E33CEA4127BD72EADC968 /* PathDisplayTests.swift */,
 				BE04FF38C9E336A47C7E161B /* PerformanceHelpersTests.swift */,
 				22033C000C8317754EEB6984 /* PerServerComplicationTests.swift */,
+				AFF086A1DC9BE1E5BD328084 /* PiByokE2ETests.swift */,
 				E37E6A02561EFC0135BB00F5 /* PluginMentionEncodingTests.swift */,
 				689720B7DCABED4F7EC8A5C6 /* RealtimeConversationProtocolTests.swift */,
 				009A217AC2D736865C5F06F5 /* RunningTurnSnapshotTests.swift */,
@@ -1898,6 +1901,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 1A404B5AF7C5FBB5B12A376D /* Build configuration list for PBXNativeTarget "LitterTests" */;
 			buildPhases = (
+				8581B43D01FC279ADB369976 /* Pi test-injection rebuild (opt-in) */,
 				4BCB9005F66891D7C7A33820 /* Sources */,
 			);
 			buildRules = (
@@ -2208,6 +2212,28 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		8581B43D01FC279ADB369976 /* Pi test-injection rebuild (opt-in) */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Pi test-injection rebuild (opt-in)";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -euo pipefail\nif [ \"${ENABLE_PI_TEST_INJECTION:-NO}\" != \"YES\" ]; then\n  echo \"ENABLE_PI_TEST_INJECTION not set; skipping test-injection Rust rebuild.\"\n  exit 0\nfi\necho \"ENABLE_PI_TEST_INJECTION=YES; rebuilding Rust simulator staticlib with test-injection feature.\"\ncd \"$SRCROOT/../..\"\nmake rust-ios-sim-test-injection\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		0FB56C870946890BD5452F5E /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -2277,6 +2303,7 @@
 				333B502373DE386E9BDCE871 /* PathDisplayTests.swift in Sources */,
 				8EC17845C1FE8B8550984B57 /* PerServerComplicationTests.swift in Sources */,
 				ECD39F196866971BFDF7E17D /* PerformanceHelpersTests.swift in Sources */,
+				168B355D4745A558DD13FA1F /* PiByokE2ETests.swift in Sources */,
 				C87E14EF9EE09B6990C255AC /* PluginMentionEncodingTests.swift in Sources */,
 				5CADE26AD9CB723244C8F639 /* RealtimeConversationProtocolTests.swift in Sources */,
 				F36A73F7FC24709ADD299327 /* RunningTurnSnapshotTests.swift in Sources */,
@@ -2769,8 +2796,10 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
+				PI_TEST_INJECTION_CONDITION = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.litter.LitterTests;
 				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(PI_TEST_INJECTION_CONDITION)";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Litter.app/Litter";
 			};
@@ -2888,8 +2917,10 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
+				PI_TEST_INJECTION_CONDITION = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.litter.LitterTests;
 				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(PI_TEST_INJECTION_CONDITION)";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Litter.app/Litter";
 			};
@@ -3215,8 +3246,13 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
+				PI_TEST_INJECTION_CONDITION = "$(PI_TEST_INJECTION_CONDITION_$(ENABLE_PI_TEST_INJECTION))";
+				PI_TEST_INJECTION_CONDITION_ = "";
+				PI_TEST_INJECTION_CONDITION_NO = "";
+				PI_TEST_INJECTION_CONDITION_YES = PI_TEST_INJECTION;
 				PRODUCT_BUNDLE_IDENTIFIER = com.litter.LitterTests;
 				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(PI_TEST_INJECTION_CONDITION)";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Litter.app/Litter";
 			};
