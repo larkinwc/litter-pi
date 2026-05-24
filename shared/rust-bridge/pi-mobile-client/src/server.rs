@@ -268,7 +268,25 @@ pub fn start_in_process(args: InProcessStartArgs) -> PiInProcessHandle {
             // Build the asupersync runtime on this thread. We use the
             // current_thread preset so the runtime worker count is bounded
             // and the scheduler shutdown path is the simplest possible.
-            let runtime = match asupersync::runtime::RuntimeBuilder::current_thread().build() {
+            // We must attach an I/O reactor: pi's HTTP client (used by every
+            // provider, including AnthropicProvider over the BYOK proxy)
+            // drives network sockets through asupersync's reactor, and
+            // without one the agent loop hangs forever the moment it
+            // issues its first request.
+            let reactor = match asupersync::runtime::reactor::create_reactor() {
+                Ok(r) => r,
+                Err(err) => {
+                    tracing::error!(
+                        target: "pi_mobile_client::server",
+                        "failed to create asupersync reactor: {err:?}"
+                    );
+                    return;
+                }
+            };
+            let runtime = match asupersync::runtime::RuntimeBuilder::current_thread()
+                .with_reactor(reactor)
+                .build()
+            {
                 Ok(rt) => rt,
                 Err(err) => {
                     tracing::error!(

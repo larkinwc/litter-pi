@@ -186,27 +186,28 @@ async fn build_pi_session(
     use pi::sdk::SessionOptions;
     use std::sync::Arc;
 
-    // BYOK `OPENAI_BASE_URL` handling is performed by the caller
-    // (`pi-server-runner::main` on host, the iOS BYOK start path in
-    // `codex-mobile-client::session::connection` on device) before
-    // any threads spawn, because Rust 2024 marks `std::env::set_var`
-    // as `unsafe` and `pi-mobile-client` is `#![forbid(unsafe_code)]`.
+    // BYOK base-URL override is applied directly onto pi's
+    // `SessionOptions.base_url`. pi's `create_agent_session` patches the
+    // resolved model entry before the provider implementation is built,
+    // so callers no longer need to mutate `ANTHROPIC_BASE_URL` /
+    // `OPENAI_BASE_URL` via `unsafe { env::set_var(...) }` for the
+    // override to reach the provider.
     //
-    // We surface a runtime warning if a base URL was supplied without
-    // an OpenAI API key so the failure mode is observable in logs
+    // We still surface a runtime warning if a base URL was supplied
+    // without an API key so the failure mode is observable in logs
     // instead of silently dropping the override.
     if config.base_url.is_some() && config.api_key.is_none() {
         tracing::warn!(
             target: "pi_mobile_client::bridge",
-            "BYOK base_url set but no OPENAI_API_KEY supplied; pi will use the env-resolved provider auth"
+            "BYOK base_url set but no API key supplied; pi will use the env-resolved provider auth"
         );
     }
-    let _ = &config.base_url; // env-mutation handled by the caller.
 
     let mut options = SessionOptions {
         provider: config.provider.clone(),
         model: config.model.clone(),
         api_key: config.api_key.clone(),
+        base_url: config.base_url.clone(),
         working_directory: config.working_directory.clone(),
         append_system_prompt: config.append_system_prompt.clone(),
         enabled_tools: config.enabled_tools.clone(),
@@ -307,5 +308,79 @@ async fn run_prompt(
                 message: err.to_string(),
             });
         }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Tests
+// ----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::PiSessionConfig;
+
+    fn run_async<F>(future: F) -> F::Output
+    where
+        F: std::future::Future,
+    {
+        let runtime = asupersync::runtime::RuntimeBuilder::current_thread()
+            .build()
+            .expect("asupersync runtime");
+        runtime.block_on(future)
+    }
+
+    /// VAL-IOS-PI-013 regression: `PiSessionConfig.base_url` must reach
+    /// the in-process pi provider. We build a session against the
+    /// Anthropic provider with a proxy URL and a dummy API key, then
+    /// confirm pi's `AgentSessionHandle::provider_base_url()` reports
+    /// the proxy URL — proving the override was applied to the
+    /// `ModelEntry` before the `AnthropicProvider` was constructed,
+    /// rather than being silently dropped as it was previously.
+    #[test]
+    fn build_pi_session_applies_base_url_to_anthropic_provider() {
+        let tmp = std::env::temp_dir();
+        let config = PiSessionConfig {
+            provider: Some("anthropic".to_string()),
+            model: Some("claude-opus-4-5-20251101".to_string()),
+            api_key: Some("sk-ant-dummy-for-test".to_string()),
+            base_url: Some("https://proxy.example/v1".to_string()),
+            working_directory: Some(tmp.clone()),
+            append_system_prompt: None,
+            max_tool_iterations: None,
+            enabled_tools: None,
+            tool_factory: None,
+        };
+
+        let handle = run_async(build_pi_session(&config)).expect("build pi session");
+        assert_eq!(
+            handle.provider_base_url(),
+            "https://proxy.example/v1",
+            "PiSessionConfig.base_url must reach the active provider; got `{}`",
+            handle.provider_base_url()
+        );
+    }
+
+    /// Companion check: an OpenAI-compatible provider should also pick
+    /// up the configured proxy URL via the same path. We do not assert
+    /// the exact provider class — only that the URL the provider was
+    /// built against matches what the caller asked for.
+    #[test]
+    fn build_pi_session_applies_base_url_to_openai_provider() {
+        let tmp = std::env::temp_dir();
+        let config = PiSessionConfig {
+            provider: Some("openai".to_string()),
+            model: Some("gpt-4o".to_string()),
+            api_key: Some("sk-oa-dummy-for-test".to_string()),
+            base_url: Some("https://oa-proxy.example/v1".to_string()),
+            working_directory: Some(tmp.clone()),
+            append_system_prompt: None,
+            max_tool_iterations: None,
+            enabled_tools: None,
+            tool_factory: None,
+        };
+
+        let handle = run_async(build_pi_session(&config)).expect("build pi session");
+        assert_eq!(handle.provider_base_url(), "https://oa-proxy.example/v1");
     }
 }

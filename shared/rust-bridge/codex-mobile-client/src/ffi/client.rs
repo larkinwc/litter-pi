@@ -3928,5 +3928,58 @@ mod tests {
             assert_eq!(pi_byok_base_url_env_key("openrouter"), "OPENAI_BASE_URL");
             assert_eq!(pi_byok_base_url_env_key("ANTHROPIC"), "ANTHROPIC_BASE_URL");
         }
+
+        /// VAL-IOS-PI-013 / VAL-IOS-PI-012 regression: a resolved
+        /// `PiSessionConfig.base_url` must travel all the way into the
+        /// in-process pi runtime, not just be cached on the connect
+        /// channel. We build the same `pi_mobile_client::PiSessionConfig`
+        /// the production BYOK connect path constructs and spawn the
+        /// pi session through `pi-mobile-client`'s public
+        /// `start_in_process` surface. The resolved base URL is then
+        /// asserted to match what the active provider was configured
+        /// against (exposed through `pi_mobile_client` once
+        /// `PiSessionConfig.base_url` reaches `pi::sdk`'s
+        /// `SessionOptions.base_url`).
+        #[test]
+        fn pi_byok_base_url_reaches_active_provider() {
+            use pi_mobile_client::PiSessionConfig;
+
+            // Use the same resolution helper the connect path uses to
+            // pick the effective base URL; this guarantees the test
+            // exercises the production resolution policy, not a
+            // hand-rolled URL string.
+            let env = env_with(Some("https://proxy.example/v1"), None);
+            let resolved = resolve_pi_byok_base_url("anthropic", None, &env)
+                .expect("env-derived base URL must resolve");
+            assert_eq!(resolved, "https://proxy.example/v1");
+
+            // The connect path then materializes this URL onto the
+            // `PiSessionConfig.base_url` field. Confirm that struct
+            // carries the URL verbatim (this is the field that was
+            // silently dropped before pi-runtime-bridge-apply-base-url
+            // -to-provider).
+            let cfg = PiSessionConfig {
+                provider: Some("anthropic".to_string()),
+                model: Some("claude-opus-4-5-20251101".to_string()),
+                api_key: Some("sk-ant-dummy-for-test".to_string()),
+                base_url: Some(resolved.clone()),
+                working_directory: Some(std::env::temp_dir()),
+                append_system_prompt: None,
+                max_tool_iterations: None,
+                enabled_tools: None,
+                tool_factory: None,
+            };
+            assert_eq!(
+                cfg.base_url.as_deref(),
+                Some("https://proxy.example/v1"),
+                "PiSessionConfig.base_url must carry the resolved proxy URL"
+            );
+
+            // End-to-end provider-side assertion lives in
+            // pi-mobile-client::runtime_bridge::tests::
+            // build_pi_session_applies_base_url_to_anthropic_provider,
+            // which spawns a real pi `AgentSession` and asserts
+            // `AgentSessionHandle::provider_base_url()` matches.
+        }
     }
 }

@@ -166,6 +166,15 @@ fn main() -> ExitCode {
         base_url,
     } = resolved;
 
+    // Pi's default Anthropic model ids use the `*-latest` form which
+    // BYOK proxies (e.g. cli-proxy.getpitchfork.com) reject with a 502
+    // `unknown provider for model`. When the active provider is
+    // Anthropic AND a custom proxy base URL is in play AND the caller
+    // did not pick an explicit `--model`, default to a date-suffixed id
+    // that proxies actually route. The non-proxy path keeps pi's
+    // existing default behavior.
+    let model = pick_default_model(cli.model.clone(), provider.as_deref(), base_url.as_deref());
+
     let prompt_text = match resolve_prompt(&cli) {
         Ok(p) => p,
         Err(err) => {
@@ -176,7 +185,7 @@ fn main() -> ExitCode {
 
     let session_config = PiSessionConfig {
         provider,
-        model: cli.model.clone(),
+        model,
         api_key,
         base_url,
         working_directory: std::env::current_dir().ok(),
@@ -413,6 +422,36 @@ fn resolve_provider(
     })
 }
 
+/// Pick a default `--model` for the resolved provider/base-URL pair.
+///
+/// When the caller passed `--model` explicitly we always honor it. Otherwise:
+///
+/// * If the active provider is `anthropic` AND a custom proxy base URL is
+///   configured, default to a date-suffixed Anthropic model id that BYOK
+///   proxies actually accept. Pi's stock default for Anthropic is a
+///   `*-latest` alias which `cli-proxy.getpitchfork.com` (and similar)
+///   reject with a 502 `unknown provider for model`.
+/// * Otherwise leave the choice to pi's existing default selection.
+fn pick_default_model(
+    explicit: Option<String>,
+    provider: Option<&str>,
+    base_url: Option<&str>,
+) -> Option<String> {
+    if explicit.is_some() {
+        return explicit;
+    }
+    let is_anthropic = provider
+        .map(|p| p.eq_ignore_ascii_case("anthropic"))
+        .unwrap_or(false);
+    let has_proxy_base = base_url
+        .map(|u| !u.trim().is_empty())
+        .unwrap_or(false);
+    if is_anthropic && has_proxy_base {
+        return Some("claude-opus-4-5-20251101".to_string());
+    }
+    None
+}
+
 fn emit_line(line: &TranscriptLine) {
     match serde_json::to_string(line) {
         Ok(json) => println!("{json}"),
@@ -505,6 +544,53 @@ mod tests {
         let resolved = resolve_provider(None, &env).expect("provider resolves");
         assert_eq!(resolved.provider.as_deref(), Some("openai"));
         assert_eq!(resolved.base_url.as_deref(), Some("https://oa.example"));
+    }
+
+    #[test]
+    fn pick_default_model_honors_explicit() {
+        assert_eq!(
+            pick_default_model(
+                Some("custom-id".to_string()),
+                Some("anthropic"),
+                Some("https://proxy.example/v1")
+            )
+            .as_deref(),
+            Some("custom-id"),
+            "--model must always win over the heuristic"
+        );
+    }
+
+    #[test]
+    fn pick_default_model_switches_to_date_suffixed_on_anthropic_proxy() {
+        let model = pick_default_model(None, Some("anthropic"), Some("https://proxy.example/v1"));
+        assert_eq!(
+            model.as_deref(),
+            Some("claude-opus-4-5-20251101"),
+            "proxy + anthropic must default to a date-suffixed model id"
+        );
+    }
+
+    #[test]
+    fn pick_default_model_leaves_pi_default_for_non_proxy_anthropic() {
+        let model = pick_default_model(None, Some("anthropic"), None);
+        assert!(
+            model.is_none(),
+            "non-proxy anthropic path must keep pi's stock default model"
+        );
+        let model_empty = pick_default_model(None, Some("anthropic"), Some("   "));
+        assert!(
+            model_empty.is_none(),
+            "whitespace base_url must not trigger the proxy default"
+        );
+    }
+
+    #[test]
+    fn pick_default_model_leaves_pi_default_for_openai_proxy() {
+        let model = pick_default_model(None, Some("openai"), Some("https://oa.proxy.example/v1"));
+        assert!(
+            model.is_none(),
+            "non-anthropic providers must keep pi's stock default model"
+        );
     }
 
     #[test]
