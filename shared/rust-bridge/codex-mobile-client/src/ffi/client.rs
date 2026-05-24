@@ -1887,6 +1887,98 @@ impl AppClient {
     }
 }
 
+// ── Pi runtime test-injection surface ───────────────────────────────────
+//
+// Gated on the `test-injection` cargo feature so production iOS
+// Debug/device + package builds compile without these symbols.
+// XCTest / `cargo test` builds opt in via the feature and use these
+// to substitute a stub `IshExec` and read back the active
+// `PiSessionConfig.base_url` for VAL-IOS-PI-011 / VAL-IOS-PI-012.
+//
+// Kept in a separate `impl AppClient` block so the entire UniFFI
+// export is `#[cfg]`-gated as a unit — gating an individual method
+// inside a `#[uniffi::export]` impl does not propagate to the
+// generated FFI scaffolding.
+#[cfg(any(test, feature = "test-injection"))]
+#[uniffi::export(async_runtime = "tokio")]
+impl AppClient {
+    /// Like [`Self::connect_local_pi_byok`] but accepts a caller-
+    /// supplied [`crate::pi_test_injection::PiIshExec`] in place of
+    /// the production iSH adapter. Tests use this to assert tool
+    /// calls route through their stub without booting the iSH
+    /// kernel.
+    pub async fn connect_local_pi_byok_with_ish_exec(
+        &self,
+        server_id: String,
+        display_name: String,
+        provider: String,
+        api_key: String,
+        base_url: Option<String>,
+        model: Option<String>,
+        ish_exec: Box<dyn crate::pi_test_injection::PiIshExec>,
+    ) -> Result<String, ClientError> {
+        let config = crate::session::connection::ServerConfig {
+            server_id,
+            display_name,
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            websocket_url: None,
+            is_local: true,
+            tls: false,
+        };
+        // Mirror the production base-URL resolution policy so test
+        // harnesses observe the same precedence (explicit BYOK arg >
+        // provider-matched env > none).
+        let provider_env = ProviderBaseUrlEnv {
+            anthropic_base_url: std::env::var("ANTHROPIC_BASE_URL").ok(),
+            openai_base_url: std::env::var("OPENAI_BASE_URL").ok(),
+        };
+        let effective_base_url =
+            resolve_pi_byok_base_url(&provider, base_url.as_deref(), &provider_env);
+        if let Some(value) = effective_base_url.as_deref() {
+            let env_key = pi_byok_base_url_env_key(&provider);
+            // SAFETY: setting an env var on the caller's thread before
+            // the pi asupersync thread is spawned, mirroring the
+            // production path above.
+            unsafe {
+                std::env::set_var(env_key, value);
+            }
+        }
+
+        let exec_arc: Arc<dyn crate::pi_test_injection::PiIshExec> = Arc::from(ish_exec);
+        let adapter = crate::pi_test_injection::PiIshExecAdapter::new(exec_arc);
+        let tool_factory = Some(pi_mobile_client::ToolFactoryKind::Ish(Arc::new(adapter)));
+
+        let byok = pi_mobile_client::PiSessionConfig {
+            provider: Some(provider),
+            model,
+            api_key: Some(api_key),
+            base_url: effective_base_url,
+            working_directory: None,
+            append_system_prompt: None,
+            max_tool_iterations: None,
+            enabled_tools: None,
+            tool_factory,
+        };
+        blocking_async!(self.rt, self.inner, |c| {
+            c.connect_local_pi_with_byok(config, Some(byok))
+                .await
+                .map_err(|e| ClientError::Transport(e.to_string()))
+        })
+    }
+
+    /// Return the resolved `PiSessionConfig.base_url` for the pi
+    /// session registered under `server_id`, or `None` if no pi
+    /// session is registered or the session was started without a
+    /// configured base URL. Backs VAL-IOS-PI-012's "the configured
+    /// base URL is the in-flight one" assertion.
+    pub fn pi_active_base_url(&self, server_id: String) -> Option<String> {
+        self.inner
+            .pi_channels_for_server(&server_id)
+            .and_then(|channels| channels.base_url.clone())
+    }
+}
+
 /// Result of `AppClient::start_pair_host` — bundles the host handle (used
 /// by Swift to drive the state machine) with the Bonjour publish info
 /// (used by Swift to advertise a NetService).

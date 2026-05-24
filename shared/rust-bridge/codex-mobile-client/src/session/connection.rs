@@ -843,6 +843,11 @@ impl ServerSession {
             max_attempts: 1,
         });
 
+        // Snapshot the resolved base URL before `byok` is moved into
+        // `PiInProcessStartArgs`, so it can be threaded onto the
+        // `PiSessionChannels` for test-injection readback via
+        // `AppClient.pi_active_base_url`.
+        let resolved_base_url = byok.as_ref().and_then(|cfg| cfg.base_url.clone());
         let pi_handle = start_in_process(PiInProcessStartArgs {
             session: byok,
             ..PiInProcessStartArgs::default()
@@ -929,6 +934,7 @@ impl ServerSession {
         let pi_channels = Arc::new(crate::pi_runtime_uniffi::PiSessionChannels::new(
             pi_commands_tx,
             pi_event_tx,
+            resolved_base_url,
         ));
 
         Ok(Self {

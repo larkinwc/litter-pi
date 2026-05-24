@@ -184,16 +184,29 @@ pub(crate) fn spawn_pi_event_pump(
 pub(crate) struct PiSessionChannels {
     pub(crate) commands_tx: mpsc::Sender<pi_mobile_client::Command>,
     pub(crate) events_tx: broadcast::Sender<PiEvent>,
+    /// Resolved `PiSessionConfig.base_url` captured at connect time.
+    /// `None` when the session was started in echo-mode (no BYOK
+    /// profile) or when the BYOK profile did not configure a base URL.
+    /// Read back via the test-injection accessor
+    /// `AppClient.pi_active_base_url` (only exposed when the
+    /// `test-injection` cargo feature is enabled).
+    #[cfg_attr(
+        not(any(test, feature = "test-injection")),
+        allow(dead_code)
+    )]
+    pub(crate) base_url: Option<String>,
 }
 
 impl PiSessionChannels {
     pub(crate) fn new(
         commands_tx: mpsc::Sender<pi_mobile_client::Command>,
         events_tx: broadcast::Sender<PiEvent>,
+        base_url: Option<String>,
     ) -> Self {
         Self {
             commands_tx,
             events_tx,
+            base_url,
         }
     }
 }

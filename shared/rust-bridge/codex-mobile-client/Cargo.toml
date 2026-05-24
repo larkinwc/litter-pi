@@ -59,6 +59,13 @@ unicode-segmentation = "1"
 
 [features]
 rpc-trace = []
+# Opt-in surface that exposes test-injection points (a sibling
+# `AppClient.connect_local_pi_byok_with_ish_exec` constructor and a
+# `pi_active_base_url` accessor) so XCTest / Rust integration tests can
+# substitute a stub `IshExec` and assert the active BYOK base URL
+# without booting the iSH kernel. Defaults off so production iOS/Android
+# builds do not ship the symbols.
+test-injection = []
 
 [dev-dependencies]
 tempfile = "3"

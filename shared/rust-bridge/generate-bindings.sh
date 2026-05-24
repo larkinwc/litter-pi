@@ -28,6 +28,10 @@ fi
 PROFILE="debug"
 GENERATE_SWIFT=1
 GENERATE_KOTLIN=1
+# Optional comma-separated cargo features list (e.g. "test-injection").
+# When set, the cdylib is built with `--features <list>` so the
+# generated Swift/Kotlin surfaces include feature-gated symbols.
+CARGO_FEATURE_LIST="${CODEX_BINDINGS_FEATURES:-}"
 
 for arg in "$@"; do
     case "$arg" in
@@ -40,12 +44,20 @@ for arg in "$@"; do
         --kotlin-only)
             GENERATE_SWIFT=0
             ;;
+        --features=*)
+            CARGO_FEATURE_LIST="${arg#--features=}"
+            ;;
         *)
-            echo "usage: $(basename "$0") [--release] [--swift-only] [--kotlin-only]" >&2
+            echo "usage: $(basename "$0") [--release] [--swift-only] [--kotlin-only] [--features=<list>]" >&2
             exit 1
             ;;
     esac
 done
+
+CARGO_FEATURE_ARGS=()
+if [[ -n "$CARGO_FEATURE_LIST" ]]; then
+    CARGO_FEATURE_ARGS=(--features "$CARGO_FEATURE_LIST")
+fi
 
 if [[ "$GENERATE_SWIFT" -eq 0 && "$GENERATE_KOTLIN" -eq 0 ]]; then
     echo "error: nothing to generate" >&2
@@ -58,9 +70,9 @@ fi
 echo "==> Building codex-mobile-client cdylib ($PROFILE)..."
 
 if [[ "$PROFILE" == "release" ]]; then
-    cargo build -p codex-mobile-client --release
+    cargo build -p codex-mobile-client --release ${CARGO_FEATURE_ARGS[@]+"${CARGO_FEATURE_ARGS[@]}"}
 else
-    cargo build -p codex-mobile-client
+    cargo build -p codex-mobile-client ${CARGO_FEATURE_ARGS[@]+"${CARGO_FEATURE_ARGS[@]}"}
 fi
 
 DYLIB_PATH="${CARGO_TARGET_DIR:-$WORKSPACE_DIR/target}/$PROFILE"

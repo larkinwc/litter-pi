@@ -439,6 +439,16 @@ rust-ios-sim-fast: alleycat-main $(STAMP_SYNC) $(STAMP_GHOSTTY_IOS)
 	@echo "==> Building Rust for fast iOS simulator iteration (raw staticlib + headers)..."
 	@cd $(ROOT) && $(DEV_CARGO_ENV) $(IOS_SCRIPTS)/build-rust.sh --preserve-current --fast-sim $(CARGO_FEATURES)
 
+# Variant of rust-ios-sim-fast that enables the `test-injection` cargo
+# feature so XCTest targets can drive
+# `AppClient.connect_local_pi_byok_with_ish_exec` + `pi_active_base_url`
+# without booting the iSH kernel. Production simulator/device builds do
+# NOT use this — invoke `make rust-ios-sim-fast` (or the package lane)
+# instead.
+rust-ios-sim-test-injection: alleycat-main $(STAMP_SYNC) $(STAMP_GHOSTTY_IOS)
+	@echo "==> Building Rust for iOS simulator with --test-injection (XCTest only)..."
+	@cd $(ROOT) && $(DEV_CARGO_ENV) $(IOS_SCRIPTS)/build-rust.sh --preserve-current --fast-sim --test-injection $(CARGO_FEATURES)
+
 rust-ios-macabi-fast: alleycat-main $(STAMP_SYNC) $(STAMP_GHOSTTY_IOS)
 	@echo "==> Building Rust for fast Mac Catalyst iteration (raw macabi staticlib + headers, host arch only)..."
 	@cd $(ROOT) && $(DEV_CARGO_ENV) $(IOS_SCRIPTS)/build-rust.sh --preserve-current --fast-macabi $(CARGO_FEATURES)

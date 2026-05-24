@@ -177,6 +177,8 @@ pub mod parser;
 pub mod permissions;
 pub mod pets;
 pub mod pi_runtime_uniffi;
+#[cfg(any(test, feature = "test-injection"))]
+pub mod pi_test_injection;
 pub mod plugin_refs;
 pub mod preferences;
 pub mod project;
