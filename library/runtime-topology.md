@@ -94,3 +94,48 @@ are therefore gated with
 cannot race on that env var; `cargo test -p pi-mobile-client refresh_`
 now runs without `--test-threads=1`. If you add another test that sets
 `PI_ANTHROPIC_OAUTH_TOKEN_URL`, gate it with the same serial key.
+
+## RemoteAppServerClient JSON-RPC escape hatch (ACP routing)
+
+Upstream `codex_app_server_client::RemoteAppServerClient::request` only routes
+typed `ClientRequest` values whose `method` discriminant is part of the codex
+enum. Pi's ACP surface (`session/new`, `session/prompt`, ...) is not in that
+enum, so dispatching ACP frames through `request()` would either panic or
+silently drop them.
+
+`patches/codex/remote-app-server-jsonrpc-escape-hatch.patch` adds:
+
+```rust
+RemoteAppServerClient::send_raw_request(
+    method: &str,
+    params: Option<serde_json::Value>,
+) -> IoResult<RequestResult>
+```
+
+The implementation hangs a new `RemoteClientCommand::RawRequest` off the same
+worker loop that drives typed requests, mints a unique
+`RequestId::String("raw-<n>")` from a per-client atomic counter, writes a
+`JSONRPCMessage::Request` envelope onto the wire, and routes the response
+through the existing `pending_requests` table. Callers receive the raw
+`serde_json::Value` result (or `JSONRPCErrorError`) verbatim — no typed
+decoding, no method-namespace validation.
+
+### When to use this
+
+- **Yes:** non-Codex JSON-RPC methods that need to ride the same connection
+  as Codex traffic. The pi-server bootstrap path
+  (`ssh::pi_bootstrap`) uses it for ACP methods, and alleycat side-channels
+  can use it for their own vendor methods.
+- **No:** anything whose `method` already maps to an upstream `ClientRequest`
+  variant. Use `request()` / `request_typed()` so the upstream wire-format
+  contract stays in one place.
+
+The escape hatch is intentionally minimal — do not grow it into a typed ACP
+surface. Typed ACP request/response shapes belong in `pi-mobile-client` on
+the caller side, layered on top of the raw envelope.
+
+Verified by
+`codex_mobile_client::ssh::pi_bootstrap::send_raw_request_round_trips_acp_session_new`,
+which stands up a fake JSON-line server, asserts the outbound frame carries
+`method: "session/new"` plus the caller params, and checks the server result
+is returned verbatim through `send_raw_request`.

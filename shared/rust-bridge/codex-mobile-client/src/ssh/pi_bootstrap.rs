@@ -114,6 +114,118 @@ fn uses_synthetic_proxy_url() {
     );
 }
 
+/// Exercises the upstream `RemoteAppServerClient::send_raw_request` escape
+/// hatch added by `patches/codex/remote-app-server-jsonrpc-escape-hatch.patch`.
+///
+/// ACP methods like `session/new` and `session/prompt` are not part of the
+/// typed `ClientRequest` enum, so the bootstrap path relies on this escape
+/// hatch to dispatch them over the same `JsonRpcWire` as Codex methods. This
+/// test stands up a fake JSON-line server that:
+///   1. completes the upstream initialize handshake, and
+///   2. echoes back a synthetic `session/new` response,
+/// and verifies the outbound frame carries `method: "session/new"` plus the
+/// caller's params, and that the server's `result` is returned verbatim.
+#[cfg(test)]
+#[tokio::test]
+async fn send_raw_request_round_trips_acp_session_new() {
+    use codex_app_server_client::{RemoteAppServerConnectArgs, RemoteAppServerEndpoint};
+    use codex_app_server_protocol::{JSONRPCMessage, JSONRPCResponse};
+    use codex_slingshot::json_line_wire::connect_json_line_stream;
+    use serde_json::json;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
+    let (server_read, mut server_write) = tokio::io::split(server_stream);
+    let mut server_reader = BufReader::new(server_read);
+
+    // Capture the outbound `session/new` request so the test can assert on it
+    // after the round-trip completes.
+    let (sent_tx, sent_rx) = tokio::sync::oneshot::channel::<JSONRPCMessage>();
+    let server = tokio::spawn(async move {
+        let mut sent_tx = Some(sent_tx);
+        loop {
+            let mut line = String::new();
+            let n = server_reader.read_line(&mut line).await.expect("read line");
+            if n == 0 {
+                break;
+            }
+            let msg: JSONRPCMessage = serde_json::from_str(line.trim_end()).expect("parse");
+            match msg {
+                JSONRPCMessage::Request(req) if req.method == "initialize" => {
+                    let response = JSONRPCResponse {
+                        id: req.id.clone(),
+                        result: json!({"userAgent": "stub"}),
+                    };
+                    let payload = serde_json::to_vec(&JSONRPCMessage::Response(response))
+                        .expect("serialize");
+                    server_write.write_all(&payload).await.expect("write");
+                    server_write.write_all(b"\n").await.expect("write");
+                    server_write.flush().await.expect("flush");
+                }
+                JSONRPCMessage::Notification(n) if n.method == "initialized" => {}
+                JSONRPCMessage::Request(req) if req.method == "session/new" => {
+                    let id = req.id.clone();
+                    if let Some(tx) = sent_tx.take() {
+                        let _ = tx.send(JSONRPCMessage::Request(req));
+                    }
+                    let response = JSONRPCResponse {
+                        id,
+                        result: json!({"sessionId": "sess-42", "ok": true}),
+                    };
+                    let payload = serde_json::to_vec(&JSONRPCMessage::Response(response))
+                        .expect("serialize");
+                    server_write.write_all(&payload).await.expect("write");
+                    server_write.write_all(b"\n").await.expect("write");
+                    server_write.flush().await.expect("flush");
+                }
+                other => panic!("unexpected message from client: {other:?}"),
+            }
+        }
+    });
+
+    let args = RemoteAppServerConnectArgs {
+        endpoint: RemoteAppServerEndpoint::WebSocket {
+            websocket_url: PI_ACP_PROXY_WEBSOCKET_URL.to_string(),
+            auth_token: None,
+        },
+        client_name: "litter-test".to_string(),
+        client_version: "0.0.0".to_string(),
+        experimental_api: true,
+        opt_out_notification_methods: Vec::new(),
+        channel_capacity: 8,
+    };
+
+    let client = connect_json_line_stream(client_stream, args, "pi-acp-test".to_string())
+        .await
+        .expect("connect_json_line_stream");
+
+    let params = json!({"cwd": "/tmp", "mcpServers": []});
+    let result = client
+        .send_raw_request("session/new", Some(params.clone()))
+        .await
+        .expect("send_raw_request transport")
+        .expect("send_raw_request server result");
+
+    assert_eq!(
+        result,
+        json!({"sessionId": "sess-42", "ok": true}),
+        "response result must round-trip verbatim"
+    );
+
+    let outbound = tokio::time::timeout(Duration::from_secs(2), sent_rx)
+        .await
+        .expect("timed out waiting for outbound frame")
+        .expect("outbound frame channel closed");
+    let JSONRPCMessage::Request(outbound_req) = outbound else {
+        panic!("expected outbound JSONRPC request");
+    };
+    assert_eq!(outbound_req.method, "session/new");
+    assert_eq!(outbound_req.params, Some(params));
+
+    client.shutdown().await.expect("shutdown");
+    let _ = server.await;
+}
+
 #[cfg(test)]
 #[test]
 fn ssh_session_config_is_cloneable_and_equates() {

@@ -1,0 +1,152 @@
+diff --git a/codex-rs/app-server-client/src/remote.rs b/codex-rs/app-server-client/src/remote.rs
+--- a/codex-rs/app-server-client/src/remote.rs
++++ b/codex-rs/app-server-client/src/remote.rs
+@@ -16,6 +16,9 @@
+ use std::io::Error as IoError;
+ use std::io::ErrorKind;
+ use std::io::Result as IoResult;
++use std::sync::Arc;
++use std::sync::atomic::AtomicU64;
++use std::sync::atomic::Ordering;
+ use std::time::Duration;
+ 
+ use crate::AppServerEvent;
+@@ -127,6 +130,14 @@
+         request: Box<ClientRequest>,
+         response_tx: oneshot::Sender<IoResult<RequestResult>>,
+     },
++    /// Litter extension: dispatch a raw JSON-RPC request envelope whose `method`
++    /// is not part of the upstream `ClientRequest` enum (e.g. ACP `session/new`).
++    /// The response result is routed back verbatim using the same pending-request
++    /// table used by typed `ClientRequest` dispatch.
++    RawRequest {
++        request: JSONRPCRequest,
++        response_tx: oneshot::Sender<IoResult<RequestResult>>,
++    },
+     Notify {
+         notification: ClientNotification,
+         response_tx: oneshot::Sender<IoResult<()>>,
+@@ -151,6 +162,9 @@
+     event_rx: mpsc::UnboundedReceiver<AppServerEvent>,
+     pending_events: VecDeque<AppServerEvent>,
+     worker_handle: tokio::task::JoinHandle<()>,
++    /// Litter extension: monotonic counter for `send_raw_request` request IDs so
++    /// raw-dispatch callers don't collide with typed `ClientRequest` IDs.
++    raw_request_counter: Arc<AtomicU64>,
+ }
+ 
+ #[derive(Clone)]
+@@ -399,6 +413,39 @@
+                                     break;
+                                 }
+                             }
++                            RemoteClientCommand::RawRequest { request, response_tx } => {
++                                let request_id = request.id.clone();
++                                if pending_requests.contains_key(&request_id) {
++                                    let _ = response_tx.send(Err(IoError::new(
++                                        ErrorKind::InvalidInput,
++                                        format!("duplicate remote app-server request id `{request_id}`"),
++                                    )));
++                                    continue;
++                                }
++                                pending_requests.insert(request_id.clone(), response_tx);
++                                if let Err(err) = stream.send_message(
++                                    JSONRPCMessage::Request(request),
++                                    &endpoint,
++                                )
++                                .await
++                                {
++                                    let err_message = err.to_string();
++                                    let message = format!(
++                                        "remote app server at `{endpoint}` write failed: {err_message}"
++                                    );
++                                    if let Some(response_tx) = pending_requests.remove(&request_id) {
++                                        let _ = response_tx.send(Err(err));
++                                    }
++                                    let _ = deliver_event(
++                                        &event_tx,
++                                        AppServerEvent::Disconnected {
++                                            message: message.clone(),
++                                        },
++                                    );
++                                    worker_exit_error = Some((ErrorKind::BrokenPipe, message));
++                                    break;
++                                }
++                            }
+                             RemoteClientCommand::Notify { notification, response_tx } => {
+                                 let result = stream.send_message(
+                                     JSONRPCMessage::Notification(
+@@ -575,6 +622,7 @@
+             event_rx,
+             pending_events: pending_events.into(),
+             worker_handle,
++            raw_request_counter: Arc::new(AtomicU64::new(0)),
+         })
+     }
+ 
+@@ -624,6 +672,49 @@
+         })?;
+         serde_json::from_value(result)
+             .map_err(|source| TypedRequestError::Deserialize { method, source })
++    }
++
++    /// Litter extension: dispatch a JSON-RPC request whose `method` is not part
++    /// of the upstream typed `ClientRequest` enum (for example ACP
++    /// `session/new` / `session/prompt`). The request travels over the same
++    /// underlying `JsonRpcWire` as typed requests and the raw JSON-RPC result
++    /// (or error) is returned verbatim.
++    ///
++    /// This is intentionally minimal: it does not synthesize typed result
++    /// shapes and does not validate the method namespace. Callers are
++    /// responsible for serializing `params` into a JSON value the remote
++    /// understands and for decoding the returned `serde_json::Value`.
++    pub async fn send_raw_request(
++        &self,
++        method: &str,
++        params: Option<serde_json::Value>,
++    ) -> IoResult<RequestResult> {
++        let id = self.raw_request_counter.fetch_add(1, Ordering::Relaxed);
++        let request = JSONRPCRequest {
++            id: RequestId::String(format!("raw-{id}")),
++            method: method.to_string(),
++            params,
++            trace: None,
++        };
++        let (response_tx, response_rx) = oneshot::channel();
++        self.command_tx
++            .send(RemoteClientCommand::RawRequest {
++                request,
++                response_tx,
++            })
++            .await
++            .map_err(|_| {
++                IoError::new(
++                    ErrorKind::BrokenPipe,
++                    "remote app-server worker channel is closed",
++                )
++            })?;
++        response_rx.await.map_err(|_| {
++            IoError::new(
++                ErrorKind::BrokenPipe,
++                "remote app-server request channel is closed",
++            )
++        })?
+     }
+ 
+     pub async fn notify(&self, notification: ClientNotification) -> IoResult<()> {
+@@ -715,6 +806,7 @@
+             event_rx,
+             pending_events: _pending_events,
+             worker_handle,
++            raw_request_counter: _raw_request_counter,
+         } = self;
+         let mut worker_handle = worker_handle;
+         drop(event_rx);
+@@ -1064,6 +1156,7 @@
+             event_rx,
+             pending_events: VecDeque::new(),
+             worker_handle,
++            raw_request_counter: Arc::new(AtomicU64::new(0)),
+         };
+ 
+         client
