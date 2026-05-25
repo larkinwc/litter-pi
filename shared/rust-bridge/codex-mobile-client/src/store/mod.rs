@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod agent_metadata;
+pub mod auth_state;
 pub mod boundary;
 pub mod reconcile;
 pub mod reducer;
@@ -8,6 +9,7 @@ pub mod updates;
 mod voice;
 
 pub use agent_metadata::{AgentMetadataStore, AppAgentMetadata};
+pub use auth_state::{AuthSource, AuthState};
 
 pub(crate) use boundary::project_thread_snapshot;
 pub use boundary::{

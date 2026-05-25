@@ -4381,6 +4381,7 @@ dependencies = [
  "futures",
  "pi_agent_rust",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
 ]

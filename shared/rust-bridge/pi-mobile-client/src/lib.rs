@@ -21,7 +21,7 @@ mod server;
 // are declared (so the file tree matches the architecture doc) but not
 // re-exported from the crate root.
 mod approvals;
-mod auth;
+pub mod auth;
 mod config;
 mod events;
 mod local_runtime_instructions;
