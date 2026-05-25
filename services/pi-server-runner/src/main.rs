@@ -286,6 +286,16 @@ fn auth_source_label(source: AuthEventSource) -> &'static str {
     }
 }
 
+/// True when `event` indicates pi already has a stored, usable
+/// credential under the anthropic provider id — covering both OAuth
+/// (Authorized{Oauth}) and BYOK (Authorized{Byok}) snapshots. Used by
+/// the resolve fallback so a relaunch without env vars after a
+/// successful BYOK persistence still reuses the on-disk key instead of
+/// re-prompting.
+fn is_stored_authorized(event: &AuthEvent) -> bool {
+    matches!(event, AuthEvent::Authorized { .. })
+}
+
 fn main() -> ExitCode {
     // Best-effort tracing init; ignored if the user already wired one.
     let _ = tracing_subscriber::fmt()
@@ -385,7 +395,11 @@ fn main() -> ExitCode {
         client_secret: None,
         auth_path: cli.auth_path.clone(),
     });
-    let has_stored_oauth = matches!(
+    // Accept either OAuth or BYOK Authorized snapshots so a relaunch
+    // without env vars after a successful BYOK persistence reuses the
+    // stored credential instead of erroring on the missing env key.
+    let has_stored_authorized = is_stored_authorized(&stored_snapshot);
+    let stored_oauth_only = matches!(
         stored_snapshot,
         AuthEvent::Authorized {
             source: AuthEventSource::Oauth,
@@ -393,7 +407,7 @@ fn main() -> ExitCode {
         }
     );
     if !cli.oauth_paste {
-        if has_stored_oauth {
+        if stored_oauth_only {
             emit_line(&TranscriptLine::OauthCredentialsLoaded { source: "oauth" });
         }
         emit_line(&auth_state_line(&stored_snapshot));
@@ -401,10 +415,10 @@ fn main() -> ExitCode {
 
     let resolved = match resolve_provider(cli.provider.clone(), &env) {
         Ok(r) => r,
-        Err(err) if has_stored_oauth => {
+        Err(err) if has_stored_authorized => {
             tracing::debug!(
                 target: "pi_server_runner",
-                "no BYOK env key supplied; relying on stored Anthropic OAuth credential ({err})"
+                "no BYOK env key ********* relying on stored Anthropic credential ({err})"
             );
             ResolvedProvider {
                 provider: Some("anthropic".to_string()),
@@ -1256,6 +1270,63 @@ mod tests {
             }
             other => panic!("expected AuthState transcript line, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn is_stored_authorized_accepts_both_oauth_and_byok() {
+        // OAuth-source stored credential — the original supported case.
+        assert!(is_stored_authorized(&AuthEvent::Authorized {
+            source: AuthEventSource::Oauth,
+            refresh_token: None,
+        }));
+        // BYOK-source stored credential — the relaunch-without-env path
+        // this feature must now also cover.
+        assert!(is_stored_authorized(&AuthEvent::Authorized {
+            source: AuthEventSource::Byok,
+            refresh_token: None,
+        }));
+        assert!(!is_stored_authorized(&AuthEvent::Unauthenticated));
+        assert!(!is_stored_authorized(&AuthEvent::Authorizing));
+        assert!(!is_stored_authorized(&AuthEvent::Failed {
+            reason: "x".to_string(),
+        }));
+    }
+
+    #[test]
+    fn byok_persisted_credential_is_reused_on_relaunch_without_env() {
+        // Simulates a BYOK relaunch path: after `--byok` writes an
+        // anthropic key to auth.json, a subsequent invocation without
+        // env vars must observe `Authorized { Byok }` and treat it as
+        // a stored credential the resolve fallback can rely on.
+        let dir = tempfile::tempdir().expect("tmpdir");
+        let auth_path = dir.path().join("auth.json");
+        run_byok_persist_flow(
+            Some(auth_path.clone()),
+            Some("sk-ant-relaunch-test".to_string()),
+            None,
+            None,
+        )
+        .expect("anthropic byok must succeed");
+
+        let snap = snapshot_anthropic_oauth(AnthropicOAuthConfig {
+            client_id: None,
+            client_secret: None,
+            auth_path: Some(auth_path.clone()),
+        });
+        assert!(
+            matches!(
+                snap,
+                AuthEvent::Authorized {
+                    source: AuthEventSource::Byok,
+                    ..
+                }
+            ),
+            "expected Authorized {{ Byok }}, got {snap:?}"
+        );
+        assert!(
+            is_stored_authorized(&snap),
+            "BYOK Authorized snapshot must satisfy is_stored_authorized so the resolve fallback reuses it"
+        );
     }
 
     #[test]
