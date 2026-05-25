@@ -2215,22 +2215,26 @@
 /* Begin PBXShellScriptBuildPhase section */
 		8581B43D01FC279ADB369976 /* Pi test-injection rebuild (opt-in) */ = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(SRCROOT)/../../shared/rust-bridge/Cargo.toml",
+				"$(SRCROOT)/../../shared/rust-bridge/Cargo.lock",
+				"$(SRCROOT)/../../shared/rust-bridge/codex-mobile-client/Cargo.toml",
+				"$(SRCROOT)/../../shared/rust-bridge/pi-mobile-client/Cargo.toml",
 			);
 			name = "Pi test-injection rebuild (opt-in)";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(DERIVED_FILE_DIR)/pi-test-injection.stamp",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "set -euo pipefail\nif [ \"${ENABLE_PI_TEST_INJECTION:-NO}\" != \"YES\" ]; then\n  echo \"ENABLE_PI_TEST_INJECTION not set; skipping test-injection Rust rebuild.\"\n  exit 0\nfi\necho \"ENABLE_PI_TEST_INJECTION=YES; rebuilding Rust simulator staticlib with test-injection feature.\"\ncd \"$SRCROOT/../..\"\nmake rust-ios-sim-test-injection\n";
+			shellScript = "set -euo pipefail\nmkdir -p \"$DERIVED_FILE_DIR\"\ntouch \"$DERIVED_FILE_DIR/pi-test-injection.stamp\"\nif [ \"${ENABLE_PI_TEST_INJECTION:-NO}\" != \"YES\" ]; then\n  echo \"ENABLE_PI_TEST_INJECTION not set; skipping test-injection Rust rebuild.\"\n  exit 0\nfi\necho \"ENABLE_PI_TEST_INJECTION=YES; rebuilding Rust simulator staticlib with test-injection feature.\"\ncd \"$SRCROOT/../..\"\nmake rust-ios-sim-test-injection\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

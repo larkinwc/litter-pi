@@ -40,7 +40,12 @@ final class PiByokE2ETests: XCTestCase {
             "ANTHROPIC_API_KEY",
             assertion: "VAL-IOS-PI-011"
         )
-        let baseURL = ProcessInfo.processInfo.environment["ANTHROPIC_BASE_URL"]
+        let baseURL = Self.envValue("ANTHROPIC_BASE_URL")
+        // Many BYOK Anthropic proxies (notably cli-proxy.getpitchfork.com)
+        // reject the runtime's default model with HTTP 502 'unknown
+        // provider for model'. Allow the test plan / `.env` to override.
+        // When absent, fall through to runtime_bridge's default.
+        let model = Self.envValue("ANTHROPIC_MODEL")
 
         let stub = RecordingPiIshExec(
             stdout: Data("bin\netc\nhome\nroot\nusr\n".utf8),
@@ -52,7 +57,7 @@ final class PiByokE2ETests: XCTestCase {
             provider: "anthropic",
             apiKey: apiKey,
             baseURL: baseURL,
-            model: nil,
+            model: model,
             stub: stub,
             prompt: "say hi and run ls /root"
         )
@@ -89,7 +94,7 @@ final class PiByokE2ETests: XCTestCase {
         )
         // Many OpenAI-compatible hosts only expose a subset of model
         // names; allow the test environment to override the default.
-        let model = ProcessInfo.processInfo.environment["OPENAI_MODEL"]
+        let model = Self.envValue("OPENAI_MODEL")
 
         let stub = RecordingPiIshExec(
             stdout: Data("bin\netc\nhome\nroot\nusr\n".utf8),
@@ -137,19 +142,49 @@ final class PiByokE2ETests: XCTestCase {
         var sawTurnComplete: Bool = false
     }
 
+    /// Reads a BYOK env var with simulator-sanitization workaround.
+    ///
+    /// The iOS Simulator (Xcode 26+) strips `OPENAI_API_KEY` and
+    /// `OPENAI_BASE_URL` from the launched test process environment
+    /// — even when forwarded via `TEST_RUNNER_*` — apparently to
+    /// avoid leaking host Apple Intelligence credentials into apps
+    /// under test. Other `OPENAI_*` names (e.g. `OPENAI_MODEL`,
+    /// `OPENAI_FOO`) and every `ANTHROPIC_*` name pass through
+    /// unchanged. To work around the strip we accept a
+    /// `LITTER_BYOK_*` namespaced override that the simulator does
+    /// not sanitize and fall back to the canonical name if the
+    /// override is unset. The canonical name still works for
+    /// `ANTHROPIC_*` (and is what the rest of the codebase reads
+    /// via `.env`), so the namespaced form is only required for the
+    /// two stripped OpenAI keys; we accept both forms uniformly for
+    /// symmetry.
+    static func envValue(_ name: String) -> String? {
+        let env = ProcessInfo.processInfo.environment
+        if let override = env["LITTER_BYOK_\(name)"], !override.isEmpty {
+            return override
+        }
+        if let value = env[name], !value.isEmpty {
+            return value
+        }
+        return nil
+    }
+
     /// Skip-with-pointer helper for missing credentials.
     private static func requireEnv(
         _ name: String,
         assertion: String
     ) throws -> String {
-        let env = ProcessInfo.processInfo.environment
-        if let value = env[name], !value.isEmpty {
+        if let value = envValue(name) {
             return value
         }
         throw XCTSkip(
             "\(assertion): \(name) is not set in the test environment. " +
-            "Populate it from the repo .env and forward it to xcodebuild. " +
-            "See library/environment.md for the canonical credential matrix."
+            "Populate it from the repo .env and forward it to xcodebuild " +
+            "as TEST_RUNNER_\(name)=... (or, for OPENAI_API_KEY / " +
+            "OPENAI_BASE_URL specifically, TEST_RUNNER_LITTER_BYOK_\(name)" +
+            "=... because the iOS Simulator strips those two names from " +
+            "the test process env). See library/environment.md for the " +
+            "canonical credential matrix."
         )
     }
 

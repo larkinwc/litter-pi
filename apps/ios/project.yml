@@ -407,12 +407,31 @@ targets:
     # anything else the script is a no-op, keeping the production
     # simulator lane (`make rust-ios-sim-fast`) authoritative.
     preBuildScripts:
+      # The inputs/outputs declarations let Xcode skip this script when
+      # the cargo manifests are up-to-date, so a re-run of
+      # `xcodebuild test` does not spend 5-7 minutes invoking cargo on
+      # every invocation. We only need to flag the manifest tree as
+      # inputs — Cargo itself is the authority on whether sources
+      # changed once the script runs. The output is a stamp file under
+      # DERIVED_FILE_DIR (touched on every run) so we declare *an*
+      # output without creating a build-graph cycle on the simulator
+      # staticlib (which the Litter target links against in the same
+      # `xcodebuild test` invocation).
       - name: "Pi test-injection rebuild (opt-in)"
-        basedOnDependencyAnalysis: false
+        basedOnDependencyAnalysis: true
         runOnlyWhenInstalling: false
         shell: /bin/bash
+        inputFiles:
+          - $(SRCROOT)/../../shared/rust-bridge/Cargo.toml
+          - $(SRCROOT)/../../shared/rust-bridge/Cargo.lock
+          - $(SRCROOT)/../../shared/rust-bridge/codex-mobile-client/Cargo.toml
+          - $(SRCROOT)/../../shared/rust-bridge/pi-mobile-client/Cargo.toml
+        outputFiles:
+          - $(DERIVED_FILE_DIR)/pi-test-injection.stamp
         script: |
           set -euo pipefail
+          mkdir -p "$DERIVED_FILE_DIR"
+          touch "$DERIVED_FILE_DIR/pi-test-injection.stamp"
           if [ "${ENABLE_PI_TEST_INJECTION:-NO}" != "YES" ]; then
             echo "ENABLE_PI_TEST_INJECTION not set; skipping test-injection Rust rebuild."
             exit 0
@@ -435,6 +454,7 @@ targets:
         # rebuild side.
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) $(PI_TEST_INJECTION_CONDITION)"
         PI_TEST_INJECTION_CONDITION: ""
+
       configs:
         Debug:
           PI_TEST_INJECTION_CONDITION: "$(PI_TEST_INJECTION_CONDITION_$(ENABLE_PI_TEST_INJECTION))"
@@ -483,6 +503,19 @@ schemes:
       customLLDBInit: $(SRCROOT)/.lldbinit
     test:
       config: Debug
+      # The checked-in test plan is intentionally minimal: it just
+      # references the LitterTests/LitterUITests targets and enables
+      # test timeouts. BYOK credentials for PiByokE2ETests
+      # (ANTHROPIC_API_KEY/BASE_URL/MODEL + OPENAI_API_KEY/BASE_URL/
+      # MODEL) flow into the test process via `TEST_RUNNER_*` env
+      # vars exported to xcodebuild; the test reads the canonical
+      # name (e.g. `ANTHROPIC_BASE_URL`) and, for the two OpenAI
+      # keys that the iOS Simulator strips, falls back to a
+      # `LITTER_BYOK_*` namespaced form. See library/environment.md
+      # and PiByokE2ETests.envValue for the full contract.
+      testPlans:
+        - path: Tests/LitterTests.xctestplan
+          defaultPlan: true
       targets:
         - LitterTests
         - LitterUITests

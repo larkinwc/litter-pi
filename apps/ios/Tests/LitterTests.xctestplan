@@ -1,0 +1,31 @@
+{
+  "configurations" : [
+    {
+      "id" : "2AF94632-6A9E-4171-B44A-4CE5DE9E072B",
+      "name" : "BYOK",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "testTimeoutsEnabled" : true
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:Litter.xcodeproj",
+        "identifier" : "LitterTests",
+        "name" : "LitterTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Litter.xcodeproj",
+        "identifier" : "LitterUITests",
+        "name" : "LitterUITests"
+      }
+    }
+  ],
+  "version" : 1
+}
