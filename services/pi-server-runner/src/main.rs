@@ -59,6 +59,10 @@ use pi_mobile_client::{
 };
 use serde::Serialize;
 
+mod remote;
+
+use remote::{InjectDropMode, RemoteSshArgs, drive_remote_ssh};
+
 /// Which built-in tool factory the runner should mount.
 ///
 /// `pty-dev` is the macOS host stand-in for iSH (iOS) and proot
@@ -187,6 +191,43 @@ struct Cli {
     /// installed credentials.
     #[arg(long, value_name = "PATH")]
     auth_path: Option<PathBuf>,
+
+    /// Drive a remote `pi acp` session over SSH against `<HOST>`.
+    /// Combine with `--user`, optional `--port`, `--prompt`, and
+    /// `--events-out` to capture the JSONL transcript. Mutually
+    /// exclusive with `--local`; key auth uses the first existing
+    /// of `~/.ssh/id_ed25519`, `~/.ssh/id_rsa`, `~/.ssh/id_ecdsa`
+    /// (or `--ssh-key-path <PATH>`).
+    #[arg(long, value_name = "HOST", conflicts_with = "local")]
+    remote_ssh: Option<String>,
+
+    /// Remote login user for `--remote-ssh`. Defaults to `$USER`
+    /// when omitted.
+    #[arg(long, value_name = "USER", requires = "remote_ssh")]
+    user: Option<String>,
+
+    /// Remote SSH port for `--remote-ssh`. Defaults to 22.
+    #[arg(long, value_name = "PORT", default_value_t = 22, requires = "remote_ssh")]
+    ssh_port: u16,
+
+    /// Override the SSH private-key path used for `--remote-ssh`.
+    /// Defaults to probing `~/.ssh/` in canonical order.
+    #[arg(long, value_name = "PATH", requires = "remote_ssh")]
+    ssh_key_path: Option<PathBuf>,
+
+    /// Append every emitted JSONL transcript line to `<PATH>` in
+    /// addition to stdout. Validators consume the file directly
+    /// (e.g. `artifacts/val-rem/004-remote-ssh-turn.events.jsonl`).
+    #[arg(long, value_name = "PATH")]
+    events_out: Option<PathBuf>,
+
+    /// Reconnect-tolerance mode for VAL-REM-006 / VAL-REM-007.
+    /// `kill-stop` schedules a `kill -STOP`/`kill -CONT` cycle on
+    /// the local russh PID after 60s idle; `socat-partition` tears
+    /// down a socat-proxied tunnel. Both modes are orchestrated by
+    /// an out-of-band helper script invoked by the validator.
+    #[arg(long, value_enum, value_name = "MODE", requires = "remote_ssh")]
+    inject_drop: Option<InjectDropMode>,
 }
 
 /// Wire shape of a single JSONL transcript line.
@@ -308,9 +349,45 @@ fn main() -> ExitCode {
 
     let cli = Cli::parse();
 
+    if let Some(host) = cli.remote_ssh.clone() {
+        let user = cli
+            .user
+            .clone()
+            .or_else(|| std::env::var("USER").ok())
+            .unwrap_or_else(|| "pi".to_string());
+        let prompt = match resolve_prompt(&cli) {
+            Ok(p) => p,
+            Err(err) => {
+                eprintln!("pi-server-runner: {err}");
+                return ExitCode::from(2);
+            }
+        };
+        let remote_args = RemoteSshArgs {
+            host,
+            user,
+            port: cli.ssh_port,
+            prompt,
+            events_out: cli.events_out.clone(),
+            inject_drop: cli.inject_drop,
+            ssh_key_path: cli.ssh_key_path.clone(),
+            timeout_secs: cli.timeout_secs,
+        };
+        let rt = match tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt,
+            Err(err) => {
+                eprintln!("pi-server-runner: tokio runtime build failed: {err}");
+                return ExitCode::from(2);
+            }
+        };
+        return rt.block_on(drive_remote_ssh(remote_args));
+    }
+
     if !cli.local {
         eprintln!(
-            "pi-server-runner: --local is the only supported mode in this milestone; rerun with --local."
+            "pi-server-runner: pass --local for in-process pi or --remote-ssh <HOST> for remote pi acp."
         );
         return ExitCode::from(2);
     }
