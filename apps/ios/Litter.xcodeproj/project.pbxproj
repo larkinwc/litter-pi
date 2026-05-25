@@ -20,6 +20,7 @@
 		040DA1C4B152364555F79660 /* LocalCodexBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = D330E51EBB1EC86C197A9296 /* LocalCodexBootstrap.swift */; };
 		04743D5A1900185832682235 /* SSHLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A9876F2929290D47ED57D77 /* SSHLoginSheet.swift */; };
 		04A9DBF10C6021392CB30528 /* ComputerUseToolCallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32A00D8BD24DF9E3C4F5EA2C /* ComputerUseToolCallView.swift */; };
+		04D8651C9A7B68E852774113 /* AnthropicOAuthBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86E9BA1922DE421434355AF2 /* AnthropicOAuthBridge.swift */; };
 		05052123B10F8DF294F93954 /* ProximityHaptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1145D1C6621EAFEACB35671A /* ProximityHaptics.swift */; };
 		055E4E6F482808FF3A6FE4AD /* LitterPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05E1F150502D4C5682EBBFD /* LitterPalette.swift */; };
 		05A1BF5FB8220D9D48C611D0 /* SnapshotHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 615E709D4D5722523052907E /* SnapshotHelper.swift */; };
@@ -415,6 +416,7 @@
 		998E606128A3770EE03927FB /* TipJarProducts.storekit in Resources */ = {isa = PBXBuildFile; fileRef = 3AF1303B192D17E47D3F9183 /* TipJarProducts.storekit */; };
 		9A2B73D29CDB5CFEC9AEC2CB /* SSHAgentPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55B149B584488F5C063EE3BC /* SSHAgentPickerSheet.swift */; };
 		9AB96D93B2197412451A76F4 /* AnimatedSplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78076308EEAAE64BC3BFDC1F /* AnimatedSplashView.swift */; };
+		9B12B97B27ACC5097697A21D /* AnthropicOAuthSheetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C7FEBBE4363D003E4E3B26 /* AnthropicOAuthSheetTests.swift */; };
 		9B982CFE6EB151D5E27BB2F3 /* SessionsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C329A73DFA85F4EB70618DCF /* SessionsModel.swift */; };
 		9C135E21A7D18E46E9E7B064 /* GhosttyBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = A9881AF33F0C5E5B007B7E88 /* GhosttyBridge.m */; };
 		9C2A955AF5986A3C82DA436A /* ImageGenerationToolCallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85743F1AC88293BE8BBD27DA /* ImageGenerationToolCallView.swift */; };
@@ -451,6 +453,7 @@
 		A91B73BD99881AF4EF7388BE /* RustAlleycatBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93CDBDD02E344E7C903D5DEC /* RustAlleycatBridge.swift */; };
 		AA10EE43A455D870C2B01F65 /* DynamicTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4874A6712A57F780064DB0E /* DynamicTools.swift */; };
 		AA31352E315C5C623403E4DA /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FE71A015A197F8B7F6AE82B8 /* Security.framework */; };
+		AA7772EB64C9BD2951D8103D /* AnthropicOAuthBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86E9BA1922DE421434355AF2 /* AnthropicOAuthBridge.swift */; };
 		AAB89F368EA6954B70DE0D09 /* MessageRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2325BAE1FF0D41A4D5ADE3AD /* MessageRecorder.swift */; };
 		AABDEAC2D1616649533BC57E /* VideoWallpaperPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B361A4FDCFF12B0FE7E893EC /* VideoWallpaperPlayerView.swift */; };
 		AB54D3436F4C5C81E9C45450 /* ServerPillRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F98A952845B6690CEC61680E /* ServerPillRow.swift */; };
@@ -640,6 +643,7 @@
 		EE3BF9B54DC05D0C46470B1B /* WallpaperAdjustView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BE99A02238FD8184F77DD49 /* WallpaperAdjustView.swift */; };
 		EE6C05398F1500153C5969E7 /* dracula-soft.json in Resources */ = {isa = PBXBuildFile; fileRef = AF409B64E0082FC6B68379EA /* dracula-soft.json */; };
 		EE7244AFC4928807405DB739 /* ExperimentalFeatures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56597C90314B4DF5587C3949 /* ExperimentalFeatures.swift */; };
+		EE789F9A846857FE6841DB68 /* AnthropicKeychainStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69E399A8B2045045F440CBEB /* AnthropicKeychainStorage.swift */; };
 		EEEBA55C8002EECC829EB3E7 /* github-light.json in Resources */ = {isa = PBXBuildFile; fileRef = 760BBA087DD7F86B27829E23 /* github-light.json */; };
 		EF781D13BE07551CFBD84C16 /* PiCapabilityGates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00185D1EBB5518DF35218D6C /* PiCapabilityGates.swift */; };
 		F1535DE46C8E5A530A8C131E /* ConversationScreenModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B66383694E80CDCBCF582C67 /* ConversationScreenModelTests.swift */; };
@@ -674,6 +678,7 @@
 		F9CBE40C2CA9C8B291A9FD9C /* github-dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 87E1D2E7E6CB4DA678C6605E /* github-dark.json */; };
 		FA0BE6B1508ACD9FE2702834 /* ThreadSearchResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7B2873F09522FAE2FFFFC9B /* ThreadSearchResultsView.swift */; };
 		FA145BA6C8F374ABE9C7B924 /* linear-light.json in Resources */ = {isa = PBXBuildFile; fileRef = 9355F09B357618AB71A7C114 /* linear-light.json */; };
+		FA76595B7570E1970772C63E /* AnthropicKeychainStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69E399A8B2045045F440CBEB /* AnthropicKeychainStorage.swift */; };
 		FA77FC0E7A7570062906E823 /* AmbientSuggestionsList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3759125C1ED21FC24EE5C644 /* AmbientSuggestionsList.swift */; };
 		FA98FED0824E234BDFF458AC /* snazzy-light.json in Resources */ = {isa = PBXBuildFile; fileRef = FE2B786FCD5DBBFC5BBEB20E /* snazzy-light.json */; };
 		FB63AA835CB7A5C829CF0366 /* UltrasonicEmitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 661D06D9BB4571F38A7AD272 /* UltrasonicEmitter.swift */; };
@@ -918,6 +923,7 @@
 		66961A8B9B89E5B34B6C5A93 /* PathDisplay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PathDisplay.swift; sourceTree = "<group>"; };
 		67647EBF442015361DA818CE /* HomeScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeScreen.swift; sourceTree = "<group>"; };
 		689720B7DCABED4F7EC8A5C6 /* RealtimeConversationProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeConversationProtocolTests.swift; sourceTree = "<group>"; };
+		69E399A8B2045045F440CBEB /* AnthropicKeychainStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnthropicKeychainStorage.swift; sourceTree = "<group>"; };
 		69EC5386769902646C245936 /* github-dark-dimmed.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "github-dark-dimmed.json"; sourceTree = "<group>"; };
 		6A12222458304DD9CA8D4593 /* HomeComposerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeComposerView.swift; sourceTree = "<group>"; };
 		6A485EF4E929239E297A46F5 /* DebugSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugSettings.swift; sourceTree = "<group>"; };
@@ -965,6 +971,7 @@
 		83D1805F2EFF51A7DD62CB88 /* github-dark-default.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "github-dark-default.json"; sourceTree = "<group>"; };
 		85743F1AC88293BE8BBD27DA /* ImageGenerationToolCallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageGenerationToolCallView.swift; sourceTree = "<group>"; };
 		86A94747FCE745BAA2DBEBF4 /* CrossServerToolResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossServerToolResultView.swift; sourceTree = "<group>"; };
+		86E9BA1922DE421434355AF2 /* AnthropicOAuthBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnthropicOAuthBridge.swift; sourceTree = "<group>"; };
 		87E1D2E7E6CB4DA678C6605E /* github-dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "github-dark.json"; sourceTree = "<group>"; };
 		885259DDCC6E448B237FAA61 /* temple-dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "temple-dark.json"; sourceTree = "<group>"; };
 		8872A0620A38EB5307BC098C /* RustVoiceHandoff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RustVoiceHandoff.swift; sourceTree = "<group>"; };
@@ -1035,6 +1042,7 @@
 		B06FAE2DA1D08C45531747A2 /* WatchApprovalNotification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchApprovalNotification.swift; sourceTree = "<group>"; };
 		B0C1A0569B4424123A37B0DA /* ConversationPlanSemanticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationPlanSemanticsTests.swift; sourceTree = "<group>"; };
 		B17C306BA7D9DCF6ACF24169 /* WatchAppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAppStore.swift; sourceTree = "<group>"; };
+		B1C7FEBBE4363D003E4E3B26 /* AnthropicOAuthSheetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnthropicOAuthSheetTests.swift; sourceTree = "<group>"; };
 		B22B0C284B20FB135A3A35BE /* MinigameOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinigameOverlayView.swift; sourceTree = "<group>"; };
 		B361A4FDCFF12B0FE7E893EC /* VideoWallpaperPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoWallpaperPlayerView.swift; sourceTree = "<group>"; };
 		B3987DD421CCBF1312C3CB8B /* UniFFICodexClient.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UniFFICodexClient.generated.swift; sourceTree = "<group>"; };
@@ -1244,6 +1252,7 @@
 		42471419A8813CCF74840C78 /* LitterTests */ = {
 			isa = PBXGroup;
 			children = (
+				B1C7FEBBE4363D003E4E3B26 /* AnthropicOAuthSheetTests.swift */,
 				49496FAE8491262D2C8CC657 /* AppSnapshotRuntimeTests.swift */,
 				F3474B8EA8D3148C94A7583F /* AppStatePermissionTests.swift */,
 				33402D8F29D5CAA2DD07ED9F /* ChatGPTOAuthTests.swift */,
@@ -1757,6 +1766,8 @@
 		FED26E02E71D5675B5DFB9CE /* Bridge */ = {
 			isa = PBXGroup;
 			children = (
+				69E399A8B2045045F440CBEB /* AnthropicKeychainStorage.swift */,
+				86E9BA1922DE421434355AF2 /* AnthropicOAuthBridge.swift */,
 				AEFDEDEF73BC5E33C2F2E3B1 /* AppSpecificTypes.swift */,
 				C4874A6712A57F780064DB0E /* DynamicTools.swift */,
 				A9881AF33F0C5E5B007B7E88 /* GhosttyBridge.m */,
@@ -2290,6 +2301,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9B12B97B27ACC5097697A21D /* AnthropicOAuthSheetTests.swift in Sources */,
 				D24451D266FD2443C0D7CBC4 /* AppSnapshotRuntimeTests.swift in Sources */,
 				620FC2343DCFADD1034E9CCB /* AppStatePermissionTests.swift in Sources */,
 				46C5F0B53F9EF54FE8F311A4 /* ChatGPTOAuthTests.swift in Sources */,
@@ -2355,6 +2367,8 @@
 				FA77FC0E7A7570062906E823 /* AmbientSuggestionsList.swift in Sources */,
 				3940AC132FAD6B2D8ABB3EDD /* AnimatedLogo.swift in Sources */,
 				9AB96D93B2197412451A76F4 /* AnimatedSplashView.swift in Sources */,
+				FA76595B7570E1970772C63E /* AnthropicKeychainStorage.swift in Sources */,
+				AA7772EB64C9BD2951D8103D /* AnthropicOAuthBridge.swift in Sources */,
 				27FB739D3D0181272A8E23EC /* AnthropicOAuthSheet.swift in Sources */,
 				09E6FE3F3D01DA918050822C /* AppLifecycleController.swift in Sources */,
 				EC00B0B315DCFD1F2F1A03DE /* AppModel.swift in Sources */,
@@ -2567,6 +2581,8 @@
 				8D5985E9F39401CDA4D9722F /* AmbientSuggestionsList.swift in Sources */,
 				7C98B25E0AB13E7D190C4513 /* AnimatedLogo.swift in Sources */,
 				B23DF0EC00DE8A4DE6390161 /* AnimatedSplashView.swift in Sources */,
+				EE789F9A846857FE6841DB68 /* AnthropicKeychainStorage.swift in Sources */,
+				04D8651C9A7B68E852774113 /* AnthropicOAuthBridge.swift in Sources */,
 				36D0A86E44B6D9E6C145C45E /* AnthropicOAuthSheet.swift in Sources */,
 				317E6AAE38E3C6C8B43202F6 /* AppModel.swift in Sources */,
 				76BE50FE6BD45F34126B1EE6 /* AppRpcParams.swift in Sources */,
