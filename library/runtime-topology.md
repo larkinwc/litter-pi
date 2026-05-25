@@ -77,3 +77,20 @@ credential under the `anthropic` provider key in pi's `auth.json` via
 the shared `AuthStorage` file-locking path. Existing non-anthropic
 entries are preserved. Tokens never appear in logs — only a redacted
 summary (provider, email, expires-in-ms) is emitted.
+
+## Test gotcha: `PI_ANTHROPIC_OAUTH_TOKEN_URL`
+
+`pi_agent_rust::auth::refresh_anthropic_oauth_token` resolves the token
+endpoint via the process-global `PI_ANTHROPIC_OAUTH_TOKEN_URL` env var
+(falling back to the hard-coded Anthropic URL). It does not consult the
+`token_url` field on the stored `AuthCredential::OAuth`, so any
+`pi-mobile-client` test that needs to redirect the refresh path at a
+local one-shot HTTP mock must mutate that env var. The two refresh
+tests in `pi-mobile-client/src/auth/anthropic_oauth.rs`
+(`refresh_rotates_expired_oauth_token_in_storage` and
+`refresh_with_invalid_token_emits_failed_and_invalidates_credential`)
+are therefore gated with
+`#[serial_test::serial(pi_anthropic_oauth_token_url_env)]` so they
+cannot race on that env var; `cargo test -p pi-mobile-client refresh_`
+now runs without `--test-threads=1`. If you add another test that sets
+`PI_ANTHROPIC_OAUTH_TOKEN_URL`, gate it with the same serial key.

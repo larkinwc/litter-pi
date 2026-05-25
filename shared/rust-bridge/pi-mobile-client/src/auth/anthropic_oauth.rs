@@ -444,6 +444,7 @@ mod tests {
 
     #[test]
     #[allow(unsafe_code)]
+    #[serial_test::serial(pi_anthropic_oauth_token_url_env)]
     fn refresh_rotates_expired_oauth_token_in_storage() {
         let dir = tempfile::tempdir().expect("tmpdir");
         let auth_path = dir.path().join("auth.json");
@@ -461,9 +462,12 @@ mod tests {
         );
         let (token_url, request_rx) = spawn_oneshot_capture(&body);
 
-        // SAFETY: setting our own process env var. Tests in this crate
-        // run sequentially with respect to the
-        // `PI_ANTHROPIC_OAUTH_TOKEN_URL` override.
+        // SAFETY: setting our own process env var. The
+        // `#[serial_test::serial(pi_anthropic_oauth_token_url_env)]`
+        // attribute on this test (and on the failure-path twin)
+        // serializes any test in this crate that mutates
+        // `PI_ANTHROPIC_OAUTH_TOKEN_URL`, so `cargo test` can run
+        // without `--test-threads=1`.
         unsafe {
             std::env::set_var("PI_ANTHROPIC_OAUTH_TOKEN_URL", &token_url);
         }
@@ -567,6 +571,7 @@ mod tests {
 
     #[test]
     #[allow(unsafe_code)]
+    #[serial_test::serial(pi_anthropic_oauth_token_url_env)]
     fn refresh_with_invalid_token_emits_failed_and_invalidates_credential() {
         let dir = tempfile::tempdir().expect("tmpdir");
         let auth_path = dir.path().join("auth.json");
@@ -578,10 +583,12 @@ mod tests {
             401,
             r#"{"error":"invalid_grant","error_description":"refresh token revoked"}"#,
         );
-        // SAFETY: setting our own process env var. Tests in this crate
-        // run with `serial_test` semantics implicitly because the env
-        // override is scoped to the single Anthropic OAuth driver path
-        // and no other tests touch `PI_ANTHROPIC_OAUTH_TOKEN_URL`.
+        // SAFETY: setting our own process env var. The
+        // `#[serial_test::serial(pi_anthropic_oauth_token_url_env)]`
+        // attribute on this test (and on the happy-path twin)
+        // serializes any test in this crate that mutates
+        // `PI_ANTHROPIC_OAUTH_TOKEN_URL`, so `cargo test` can run
+        // without `--test-threads=1`.
         unsafe {
             std::env::set_var("PI_ANTHROPIC_OAUTH_TOKEN_URL", &token_url);
         }
