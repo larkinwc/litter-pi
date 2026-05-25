@@ -1,39 +1,27 @@
 //! Remote `pi acp` mode for `pi-server-runner`.
 //!
-//! Defines the `--remote-ssh <host> --user <user>` CLI surface,
-//! transcript shape, and orchestration entry point so validators
-//! can pin against a stable interface while the underlying SSH +
-//! bootstrap wiring matures.
+//! Opens an SSH session against the host with `russh` key auth, spawns
+//! `pi --acp` via [`codex_mobile_client::ssh::pi_bootstrap::bootstrap_pi_server`],
+//! then drives ACP `session/new` + `session/prompt` through the
+//! upstream `RemoteAppServerClient::send_raw_request` escape hatch
+//! (patched into the codex submodule by
+//! `patches/codex/remote-app-server-jsonrpc-escape-hatch.patch`).
 //!
-//! Current scope (see also the feature's `whatWasLeftUndone` in the
-//! handoff): the runner stops at `routing_blocked` for two reasons,
-//! both surfaced as stable JSONL transcript lines so a validator
-//! can diagnose without inspecting source:
-//!
-//!   1. `PI_REMOTE_SSH_HOST` / `PI_REMOTE_SSH_USER` are not set in
-//!      this mission's `.env`. Without a reachable host the runner
-//!      cannot exercise VAL-REM-004..007 end-to-end.
-//!   2. Driving an ACP turn (`session/new`, `session/prompt`) over
-//!      the `RemoteAppServerClient` returned by
-//!      `bootstrap_pi_server` requires a `JsonRpcWire`-level escape
-//!      hatch from `codex-app-server-client`. Codex's
-//!      `ClientRequest` enum tag is closed over codex methods, so
-//!      ACP method names are not routable through `client.request`
-//!      without an upstream patch.
-//!
-//! The CLI surface (`--remote-ssh`, `--user`, `--ssh-port`,
-//! `--ssh-key-path`, `--events-out`, `--inject-drop`) and the JSONL
-//! transcript shape (`RemoteTranscriptLine`) are stable and
-//! validator-pinnable; the SSH connect + `pi acp` bootstrap landed
-//! in the prior `remote-pi-ssh-bootstrap-and-jsonrpc` feature and
-//! is exercised by its own unit tests in
-//! `shared/rust-bridge/codex-mobile-client/src/ssh/pi_bootstrap.rs`
-//! + `pi_reconnect.rs`.
+//! The transcript shape (`RemoteTranscriptLine`) is intentionally
+//! stable so validators can pin against literal field names — see
+//! `VAL-REM-004` through `VAL-REM-007`.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::time::Duration;
 
+use codex_app_server_client::{AppServerEvent, RemoteAppServerClient};
+use codex_mobile_client::ssh::pi_bootstrap::{SshSessionConfig, bootstrap_pi_server};
+use codex_mobile_client::ssh::{SshAuth, SshClient, SshCredentials};
+use futures::future::FutureExt;
 use serde::Serialize;
+use serde_json::{Value as JsonValue, json};
 use tokio::io::AsyncWriteExt;
 
 /// Drop-injection mode chosen via `--inject-drop`.
@@ -41,11 +29,11 @@ use tokio::io::AsyncWriteExt;
 #[clap(rename_all = "kebab-case")]
 pub enum InjectDropMode {
     /// Signal `kill -STOP` / `kill -CONT` on the local russh PID
-    /// after 60s idle. Orchestrated by an out-of-band helper
-    /// script.
+    /// after 60s idle. Orchestrated by an out-of-band helper script
+    /// (`tools/scripts/inject-drop-kill-stop.sh`).
     KillStop,
-    /// Tear down a socat-proxied tunnel after 60s idle.
-    /// Orchestrated by an out-of-band helper script.
+    /// Tear down a socat-proxied tunnel after 60s idle. Orchestrated
+    /// by `tools/scripts/inject-drop-socat-partition.sh`.
     SocatPartition,
 }
 
@@ -83,6 +71,9 @@ pub enum RemoteTranscriptLine {
         user: String,
         port: u16,
     },
+    Connected {
+        host: String,
+    },
     PromptScheduled {
         text: String,
     },
@@ -90,16 +81,33 @@ pub enum RemoteTranscriptLine {
         mode: &'static str,
         scheduled_in_secs: u64,
     },
-    /// The runner reached the documented stop point in this scope
-    /// and is exiting non-zero so validators can detect the
-    /// limitation deterministically.
-    RoutingBlocked {
-        reason: &'static str,
+    SessionStarted {
+        session_id: Option<String>,
     },
-    Disconnected,
+    ServerNotification {
+        method: String,
+        params: JsonValue,
+    },
+    ServerRequest {
+        method: String,
+        params: JsonValue,
+    },
+    ToolExec {
+        tool_call_id: Option<String>,
+        tool_name: Option<String>,
+        command: Option<String>,
+        raw: JsonValue,
+    },
+    PromptResult {
+        result: JsonValue,
+    },
+    TurnComplete {
+        stop_reason: Option<String>,
+    },
     TurnError {
         message: String,
     },
+    Disconnected,
 }
 
 /// Emit a transcript line to stdout and (when set) the
@@ -172,9 +180,6 @@ pub async fn drive_remote_ssh(args: RemoteSshArgs) -> ExitCode {
         }
     };
 
-    // Validate the key path eagerly so the transcript records an
-    // honest failure if the user lacks an SSH key. The path
-    // resolution is also exercised by unit tests in this module.
     let key_path = match locate_ssh_key(args.ssh_key_path.as_deref()) {
         Ok(p) => p,
         Err(err) => {
@@ -195,7 +200,7 @@ pub async fn drive_remote_ssh(args: RemoteSshArgs) -> ExitCode {
         host = %args.host,
         user = %args.user,
         port = args.port,
-        "remote ssh: would connect"
+        "remote ssh: connecting"
     );
 
     let _ = emit_remote_line(
@@ -232,24 +237,311 @@ pub async fn drive_remote_ssh(args: RemoteSshArgs) -> ExitCode {
         );
     }
 
-    // Documented stop point. See the module-level comment for why
-    // the runner does not yet drive a full ACP turn against the
-    // remote host. The reason string is stable so a validator can
-    // grep for it (`event_kind=routing_blocked`).
+    // Load the user's private key and open the SSH session.
+    let key_pem = match tokio::fs::read_to_string(&key_path).await {
+        Ok(pem) => pem,
+        Err(err) => {
+            let msg = format!("read ssh key {}: {err}", key_path.display());
+            let _ = emit_remote_line(
+                &mut events_file,
+                &RemoteTranscriptLine::TurnError { message: msg.clone() },
+            )
+            .await;
+            eprintln!("pi-server-runner: {msg}");
+            return ExitCode::from(2);
+        }
+    };
+    let credentials = SshCredentials {
+        host: args.host.clone(),
+        port: args.port,
+        username: args.user.clone(),
+        auth: SshAuth::PrivateKey {
+            key_pem,
+            passphrase: None,
+        },
+        unlock_macos_keychain: false,
+    };
+    // TOFU host key acceptance: the runner is a developer/CI tool, not
+    // a production client. Document and log the fingerprint instead of
+    // enforcing pinning here. Validators can run an out-of-band
+    // `ssh-keyscan` if they need to assert host identity.
+    let host_key_cb = Box::new(|fp: &str| {
+        tracing::info!(target: "pi_server_runner", host_fp = fp, "tofu accept ssh host key");
+        let fp = fp.to_string();
+        async move {
+            let _ = fp;
+            true
+        }
+        .boxed()
+    });
+    let ssh = match SshClient::connect(credentials, host_key_cb).await {
+        Ok(client) => Arc::new(client),
+        Err(err) => {
+            let msg = format!("ssh connect: {err}");
+            let _ = emit_remote_line(
+                &mut events_file,
+                &RemoteTranscriptLine::TurnError { message: msg.clone() },
+            )
+            .await;
+            eprintln!("pi-server-runner: {msg}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let host_cfg = SshSessionConfig::new(args.host.clone(), args.port, args.user.clone());
+    let mut client: RemoteAppServerClient = match bootstrap_pi_server(Arc::clone(&ssh), &host_cfg)
+        .await
+    {
+        Ok(c) => c,
+        Err(err) => {
+            let msg = format!("pi acp bootstrap: {err}");
+            let _ = emit_remote_line(
+                &mut events_file,
+                &RemoteTranscriptLine::TurnError { message: msg.clone() },
+            )
+            .await;
+            eprintln!("pi-server-runner: {msg}");
+            return ExitCode::from(2);
+        }
+    };
+
     let _ = emit_remote_line(
         &mut events_file,
-        &RemoteTranscriptLine::RoutingBlocked {
-            reason: "remote_pi_ssh_runner_pending_upstream_acp_routing",
+        &RemoteTranscriptLine::Connected { host: args.host.clone() },
+    )
+    .await;
+
+    // Drive the turn under an overall wall-clock timeout so a hung
+    // remote does not wedge the runner.
+    let turn_timeout = Duration::from_secs(args.timeout_secs);
+    let outcome = tokio::time::timeout(
+        turn_timeout,
+        drive_turn(&mut client, &args.prompt, &mut events_file),
+    )
+    .await;
+    let exit = match outcome {
+        Ok(Ok(())) => ExitCode::SUCCESS,
+        Ok(Err(msg)) => {
+            let _ = emit_remote_line(
+                &mut events_file,
+                &RemoteTranscriptLine::TurnError { message: msg.clone() },
+            )
+            .await;
+            eprintln!("pi-server-runner: {msg}");
+            ExitCode::from(1)
+        }
+        Err(_) => {
+            let msg = format!(
+                "remote turn timed out after {}s without turn_complete",
+                turn_timeout.as_secs()
+            );
+            let _ = emit_remote_line(
+                &mut events_file,
+                &RemoteTranscriptLine::TurnError { message: msg.clone() },
+            )
+            .await;
+            eprintln!("pi-server-runner: {msg}");
+            ExitCode::from(1)
+        }
+    };
+
+    let _ = client.shutdown().await;
+    let _ = emit_remote_line(&mut events_file, &RemoteTranscriptLine::Disconnected).await;
+    ssh.disconnect().await;
+    exit
+}
+
+/// Run one ACP turn: `session/new` then `session/prompt`, draining
+/// streaming notifications from the wire into transcript lines until
+/// the prompt response lands.
+async fn drive_turn(
+    client: &mut RemoteAppServerClient,
+    prompt: &str,
+    events_file: &mut Option<tokio::fs::File>,
+) -> Result<(), String> {
+    // session/new — pi's ACP server requires this before it will
+    // accept a prompt and returns the freshly-minted sessionId in
+    // `result.sessionId`.
+    let session_params = json!({
+        "cwd": "/tmp",
+        "mcpServers": [],
+    });
+    let session_result = client
+        .send_raw_request("session/new", Some(session_params))
+        .await
+        .map_err(|e| format!("session/new transport: {e}"))?
+        .map_err(|e| format!("session/new server: {} ({})", e.message, e.code))?;
+    let session_id = session_result
+        .get("sessionId")
+        .and_then(JsonValue::as_str)
+        .map(str::to_string);
+    let _ = emit_remote_line(
+        events_file,
+        &RemoteTranscriptLine::SessionStarted {
+            session_id: session_id.clone(),
         },
     )
     .await;
+    let session_id = session_id.ok_or_else(|| {
+        "session/new succeeded but the result is missing a sessionId string".to_string()
+    })?;
+
+    // session/prompt is the long-running call. While it streams we
+    // race the call against the wire's notification/request event
+    // stream so any `session/update` notifications get surfaced into
+    // the transcript in order.
+    let prompt_params = json!({
+        "sessionId": session_id,
+        "prompt": [
+            {"type": "text", "text": prompt}
+        ],
+    });
+    // RemoteAppServerClient::send_raw_request takes `&self` and
+    // next_event takes `&mut self`, so we cannot race them under one
+    // borrow. Instead, run the prompt to completion (notifications
+    // queue inside the wire's event_rx during the turn), then drain
+    // the queued events non-blockingly afterward so we still surface
+    // every `session/update` in transcript order.
+    let prompt_result = client
+        .send_raw_request("session/prompt", Some(prompt_params))
+        .await
+        .map_err(|e| format!("session/prompt transport: {e}"))?
+        .map_err(|e| format!("session/prompt server: {} ({})", e.message, e.code))?;
+    loop {
+        // 50ms grace per tick so any in-flight notifications that
+        // arrived after the prompt response (but before the wire's
+        // bookkeeping settled) still get drained.
+        let event = match tokio::time::timeout(
+            Duration::from_millis(50),
+            client.next_event(),
+        )
+        .await
+        {
+            Ok(Some(e)) => e,
+            Ok(None) => break,
+            Err(_) => break,
+        };
+        match event {
+            AppServerEvent::ServerNotification(notification) => {
+                let value = serde_json::to_value(&notification).unwrap_or(JsonValue::Null);
+                let (method, params) = split_method_params(value);
+                emit_tool_exec_if_present(events_file, &method, &params).await;
+                let _ = emit_remote_line(
+                    events_file,
+                    &RemoteTranscriptLine::ServerNotification { method, params },
+                )
+                .await;
+            }
+            AppServerEvent::Disconnected { message } => {
+                return Err(format!("remote pi acp disconnected: {message}"));
+            }
+            AppServerEvent::ServerRequest(request) => {
+                let value = serde_json::to_value(&request).unwrap_or(JsonValue::Null);
+                let (method, params) = split_method_params(value);
+                let _ = emit_remote_line(
+                    events_file,
+                    &RemoteTranscriptLine::ServerRequest { method, params },
+                )
+                .await;
+            }
+            other => {
+                tracing::debug!(
+                    target: "pi_server_runner",
+                    event = ?other,
+                    "ignoring app-server event during turn drain"
+                );
+            }
+        }
+    }
+
+    let stop_reason = prompt_result
+        .get("stopReason")
+        .and_then(JsonValue::as_str)
+        .map(str::to_string);
     let _ = emit_remote_line(
-        &mut events_file,
-        &RemoteTranscriptLine::Disconnected,
+        events_file,
+        &RemoteTranscriptLine::PromptResult { result: prompt_result.clone() },
     )
     .await;
-    let _ = args.timeout_secs;
-    ExitCode::from(1)
+    let _ = emit_remote_line(
+        events_file,
+        &RemoteTranscriptLine::TurnComplete { stop_reason },
+    )
+    .await;
+    Ok(())
+}
+
+/// Split a typed notification/request JSON value into its `method`
+/// string and `params` payload, treating anything that fails to match
+/// the conventional `{method, params}` envelope as `params=value`.
+fn split_method_params(mut value: JsonValue) -> (String, JsonValue) {
+    let method_string = match value.get_mut("method") {
+        Some(JsonValue::String(s)) => std::mem::take(s),
+        Some(other) => other.to_string(),
+        None => "<unknown>".to_string(),
+    };
+    let params = match value.get_mut("params") {
+        Some(slot) => std::mem::replace(slot, JsonValue::Null),
+        None => JsonValue::Null,
+    };
+    (method_string, params)
+}
+
+/// If a `session/update` notification carries a tool execution
+/// payload, surface it as a dedicated `tool_exec` transcript line so
+/// validators can grep for it without re-decoding the raw params.
+async fn emit_tool_exec_if_present(
+    events_file: &mut Option<tokio::fs::File>,
+    method: &str,
+    params: &JsonValue,
+) {
+    if !method.starts_with("session/") {
+        return;
+    }
+    // Walk the common ACP `update` shape: { update: { sessionUpdate: ..., ... } }
+    // and surface any tool_use / bash arguments. Be conservative: we
+    // emit at most one `tool_exec` per notification, and we keep the
+    // raw payload so the validator has the full context.
+    let update = params.get("update").or(Some(params));
+    let Some(update) = update else { return };
+    let kind = update
+        .get("sessionUpdate")
+        .or_else(|| update.get("type"))
+        .and_then(JsonValue::as_str);
+    if !matches!(
+        kind,
+        Some("tool_call") | Some("tool_call_update") | Some("toolCall") | Some("toolUse")
+    ) {
+        return;
+    }
+    let tool_call_id = update
+        .get("toolCallId")
+        .or_else(|| update.get("tool_call_id"))
+        .and_then(JsonValue::as_str)
+        .map(str::to_string);
+    let tool_name = update
+        .get("toolName")
+        .or_else(|| update.get("tool_name"))
+        .or_else(|| update.get("name"))
+        .and_then(JsonValue::as_str)
+        .map(str::to_string);
+    let command = update
+        .get("rawInput")
+        .or_else(|| update.get("input"))
+        .or_else(|| update.get("args"))
+        .and_then(|v| v.get("command"))
+        .and_then(JsonValue::as_str)
+        .map(str::to_string);
+    let _ = emit_remote_line(
+        events_file,
+        &RemoteTranscriptLine::ToolExec {
+            tool_call_id,
+            tool_name,
+            command,
+            raw: update.clone(),
+        },
+    )
+    .await;
 }
 
 #[cfg(test)]
@@ -342,12 +634,12 @@ mod tests {
         .expect("emit inject_drop");
         emit_remote_line(
             &mut file,
-            &RemoteTranscriptLine::RoutingBlocked {
-                reason: "remote_pi_ssh_runner_pending_upstream_acp_routing",
+            &RemoteTranscriptLine::TurnComplete {
+                stop_reason: Some("end_turn".to_string()),
             },
         )
         .await
-        .expect("emit routing_blocked");
+        .expect("emit turn_complete");
         drop(file);
 
         let body = std::fs::read_to_string(&path).expect("read");
@@ -364,13 +656,51 @@ mod tests {
         assert_eq!(second["scheduled_in_secs"], 60);
 
         let third: JsonValue = serde_json::from_str(lines[2]).expect("json line 2");
-        assert_eq!(third["event_kind"], "routing_blocked");
-        assert!(
-            third["reason"]
-                .as_str()
-                .unwrap_or("")
-                .contains("remote_pi_ssh_runner"),
-            "reason must be the stable validator-pinned string, got {third}"
+        assert_eq!(third["event_kind"], "turn_complete");
+        assert_eq!(third["stop_reason"], "end_turn");
+    }
+
+    #[test]
+    fn split_method_params_extracts_method_and_params() {
+        let value = json!({
+            "method": "session/update",
+            "params": {"sessionId": "s1", "update": {"sessionUpdate": "tool_call"}}
+        });
+        let (method, params) = split_method_params(value);
+        assert_eq!(method, "session/update");
+        assert_eq!(params["sessionId"], "s1");
+    }
+
+    #[tokio::test]
+    async fn emit_tool_exec_if_present_surfaces_bash_command() {
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let path = tmp.path().join("tool.jsonl");
+        let mut file = Some(
+            tokio::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&path)
+                .await
+                .expect("open"),
         );
+        let params = json!({
+            "sessionId": "s1",
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCallId": "tc-1",
+                "toolName": "Bash",
+                "rawInput": {"command": "ls /root"}
+            }
+        });
+        emit_tool_exec_if_present(&mut file, "session/update", &params).await;
+        drop(file);
+        let body = std::fs::read_to_string(&path).expect("read");
+        let line = body.lines().next().expect("one line");
+        let parsed: JsonValue = serde_json::from_str(line).expect("json");
+        assert_eq!(parsed["event_kind"], "tool_exec");
+        assert_eq!(parsed["tool_call_id"], "tc-1");
+        assert_eq!(parsed["tool_name"], "Bash");
+        assert_eq!(parsed["command"], "ls /root");
     }
 }

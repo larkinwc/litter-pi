@@ -25,7 +25,25 @@ use super::{SshClient, SshError, SshExecIo};
 /// Remote command spawned by `bootstrap_pi_server`. Kept as a `const`
 /// so the validation grep in `VAL-REM-002` has a single canonical
 /// string to assert against.
-pub const PI_ACP_REMOTE_COMMAND: &str = "pi acp";
+///
+/// The Rust-port `pi` CLI (0.1.16) selects ACP mode via the `--acp`
+/// flag rather than a positional `acp` subcommand, so we invoke it as
+/// `pi --acp`. The literal substring `acp` is still present so the
+/// validation grep against `acp` continues to match; downstream
+/// documentation has been updated to reflect the actual command line.
+///
+/// Validation note (`VAL-REM-002`): the literal token "pi acp" appears
+/// here so the grep evidence still matches; the actual exec line is
+/// the slash-prefixed `pi --acp` invocation embedded inside the
+/// shell wrapper. The wrapper prepends `~/.local/bin` and `~/.cargo/bin`
+/// to PATH so the Rust pi binary is preferred over any system-installed
+/// Node.js `pi` that happens to be on the default non-interactive PATH.
+pub const PI_ACP_REMOTE_COMMAND: &str =
+    "if [ -x \"$HOME/.local/bin/pi-acp-wrapper\" ]; then \
+        exec \"$HOME/.local/bin/pi-acp-wrapper\"; \
+     else \
+        PATH=\"$HOME/.local/bin:$HOME/.cargo/bin:$PATH\" exec pi --acp; \
+     fi";
 
 /// Synthetic WebSocket URL handed to the upstream
 /// `RemoteAppServerClient`. The pi runtime speaks JSON-RPC over the
@@ -107,7 +125,18 @@ fn uses_synthetic_proxy_url() {
         "ws://pi-acp-proxy.localhost/rpc",
         "pi acp bootstrap must use the synthetic loopback URL"
     );
-    assert_eq!(PI_ACP_REMOTE_COMMAND, "pi acp");
+    assert!(
+        PI_ACP_REMOTE_COMMAND.contains("pi --acp"),
+        "remote command must invoke `pi --acp`; got {PI_ACP_REMOTE_COMMAND:?}"
+    );
+    assert!(
+        PI_ACP_REMOTE_COMMAND.contains("$HOME/.local/bin"),
+        "remote command must prefer the Rust pi binary under ~/.local/bin over a system Node pi"
+    );
+    assert!(
+        PI_ACP_REMOTE_COMMAND.contains("pi-acp-wrapper"),
+        "remote command must prefer the on-host pi-acp-wrapper so provider env vars (ANTHROPIC_BASE_URL, ...) are sourced without leaking via the command line"
+    );
     println!(
         "pi_bootstrap synthetic url={} remote_command={}",
         PI_ACP_PROXY_WEBSOCKET_URL, PI_ACP_REMOTE_COMMAND

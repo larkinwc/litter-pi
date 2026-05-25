@@ -11374,7 +11374,10 @@ name = "pi-server-runner"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "codex-app-server-client",
+ "codex-app-server-protocol",
  "codex-mobile-client",
+ "futures",
  "pi-mobile-client",
  "serde",
  "serde_json",
