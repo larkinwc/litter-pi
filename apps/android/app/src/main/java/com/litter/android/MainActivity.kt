@@ -22,6 +22,8 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
+import com.litter.android.state.AnthropicOAuthBridge
+import com.litter.android.state.AnthropicOAuthCallbackBus
 import com.litter.android.state.AppLifecycleController
 import com.litter.android.state.AppModel
 import com.litter.android.state.OpenAIApiKeyStore
@@ -122,6 +124,7 @@ class MainActivity : ComponentActivity() {
 
         handleNotificationIntent(intent)
         consumeOverlayNavigationIntent(intent)
+        handleAnthropicOAuthRedirect(intent)
     }
 
     override fun onResume() {
@@ -144,6 +147,7 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         handleNotificationIntent(intent)
         consumeOverlayNavigationIntent(intent)
+        handleAnthropicOAuthRedirect(intent)
     }
 
     override fun onDestroy() {
@@ -185,6 +189,25 @@ class MainActivity : ComponentActivity() {
         intent.removeExtra(EXTRA_NOTIFICATION_SERVER_ID)
         intent.removeExtra(EXTRA_NOTIFICATION_THREAD_ID)
         return ThreadKey(serverId = serverId, threadId = threadId)
+    }
+
+    /**
+     * Forward Anthropic OAuth deep-link redirects
+     * (`litter://oauth/pi/anthropic?code=...`) to
+     * [AnthropicOAuthCallbackBus] so the Compose sign-in surface can
+     * exchange the authorization code via the shared Rust auth
+     * driver. See VAL-AUTH-003. The intent's data URI is cleared
+     * after dispatch so a subsequent `onResume` does not replay the
+     * callback.
+     */
+    private fun handleAnthropicOAuthRedirect(intent: Intent?) {
+        intent ?: return
+        if (intent.action != Intent.ACTION_VIEW) return
+        val uri = intent.data ?: return
+        if (!AnthropicOAuthBridge.isOAuthRedirect(uri)) return
+        val callback = AnthropicOAuthCallbackBus.parse(uri) ?: return
+        AnthropicOAuthCallbackBus.emit(callback)
+        intent.data = null
     }
 
     private fun consumeOverlayNavigationIntent(intent: Intent?) {
