@@ -43,11 +43,16 @@
 //! and `--provider anthropic` is used, the Anthropic URL is applied;
 //! the OpenAI URL is ignored (and vice versa).
 
-use std::io::Read as _;
-use std::process::ExitCode;
+use std::io::{BufRead, IsTerminal, Read as _, Write as _};
+use std::path::PathBuf;
+use std::process::{Command as ShellCommand, ExitCode, Stdio};
 use std::time::Duration;
 
 use clap::{Parser, ValueEnum};
+use pi_mobile_client::auth::{
+    AnthropicOAuthConfig, AnthropicOAuthDriver, AuthEvent, AuthEventSource, AuthorizeHandshake,
+    complete_anthropic_oauth_paste, pi_byok_set_blocking, snapshot_anthropic_oauth,
+};
 use pi_mobile_client::{
     Command, InProcessStartArgs, PiEvent, PiSessionConfig, ToolFactoryKind, start_in_process,
 };
@@ -126,6 +131,45 @@ struct Cli {
     /// without booting a simulator or emulator.
     #[arg(long, value_enum, default_value_t = ToolFactoryArg::PtyDev)]
     tool_factory: ToolFactoryArg,
+
+    /// Run the Anthropic OAuth Authorization Code + PKCE handshake
+    /// before driving any prompt. The runner prints the authorize URL
+    /// to stdout, attempts to open it via `open` (macOS) when a TTY is
+    /// attached, then prompts the user to paste the redirect code on
+    /// stdin. The exchanged token is persisted to pi's `auth.json`
+    /// (configurable via `--auth-path`) so subsequent invocations
+    /// without `--oauth-paste` reuse the same credential silently.
+    #[arg(long)]
+    oauth_paste: bool,
+
+    /// Persist a BYOK API key into pi's `auth.json` before running the
+    /// prompt. Combine with `--anthropic-key` for Anthropic BYOK, or
+    /// `--openai-key` (+ optional `--openai-base-url`) for an
+    /// OpenAI-compatible BYOK profile. The key is written via the
+    /// shared `pi_byok_set` helper and reused by future runs without
+    /// `--byok`.
+    #[arg(long)]
+    byok: bool,
+
+    /// BYOK Anthropic API key (requires `--byok`).
+    #[arg(long, value_name = "KEY")]
+    anthropic_key: Option<String>,
+
+    /// BYOK OpenAI-compatible API key (requires `--byok`).
+    #[arg(long, value_name = "KEY")]
+    openai_key: Option<String>,
+
+    /// BYOK OpenAI-compatible base URL (requires `--byok`).
+    #[arg(long, value_name = "URL")]
+    openai_base_url: Option<String>,
+
+    /// Override the on-disk path of pi's `auth.json`. Defaults to
+    /// pi's `Config::auth_path()` (honours `PI_CODING_AGENT_DIR`).
+    /// Mostly intended for tests and for redirecting the auth store
+    /// during validation runs that should not touch the user's
+    /// installed credentials.
+    #[arg(long, value_name = "PATH")]
+    auth_path: Option<PathBuf>,
 }
 
 /// Wire shape of a single JSONL transcript line.
@@ -162,6 +206,60 @@ enum TranscriptLine {
         message: String,
     },
     ShuttingDown,
+    AuthState {
+        /// Mirrors the variants of
+        /// [`codex_mobile_client::store::AuthState`]: `unauthenticated`,
+        /// `authorizing`, `authorized`, or `failed`.
+        state: &'static str,
+        /// `oauth` or `byok` for `authorized`; `None` otherwise.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source: Option<&'static str>,
+        /// Set when `state == "failed"`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    OauthAuthorizeUrl {
+        url: String,
+    },
+    OauthPasteWaiting,
+    OauthCredentialsLoaded {
+        source: &'static str,
+    },
+    ByokApplied {
+        provider: String,
+    },
+}
+
+fn auth_state_line(event: &AuthEvent) -> TranscriptLine {
+    match event {
+        AuthEvent::Unauthenticated => TranscriptLine::AuthState {
+            state: "unauthenticated",
+            source: None,
+            reason: None,
+        },
+        AuthEvent::Authorizing => TranscriptLine::AuthState {
+            state: "authorizing",
+            source: None,
+            reason: None,
+        },
+        AuthEvent::Authorized { source } => TranscriptLine::AuthState {
+            state: "authorized",
+            source: Some(auth_source_label(*source)),
+            reason: None,
+        },
+        AuthEvent::Failed { reason } => TranscriptLine::AuthState {
+            state: "failed",
+            source: None,
+            reason: Some(reason.clone()),
+        },
+    }
+}
+
+fn auth_source_label(source: AuthEventSource) -> &'static str {
+    match source {
+        AuthEventSource::Oauth => "oauth",
+        AuthEventSource::Byok => "byok",
+    }
 }
 
 fn main() -> ExitCode {
@@ -183,21 +281,115 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
 
+    // OAuth paste-back handshake. Runs before BYOK so that a single
+    // `--oauth-paste --byok ...` invocation (a developer setting up
+    // both code paths against the same auth.json) sees the OAuth
+    // tokens persisted first, then the BYOK key written on top.
+    if cli.oauth_paste
+        && let Err(code) = run_oauth_paste_flow(cli.auth_path.clone())
+    {
+        return code;
+    }
+
+    // BYOK persistence path. Writes the supplied API key into pi's
+    // `auth.json` via the shared `pi_byok_set` helper so subsequent
+    // runs (without `--byok`) reuse the credential.
+    if cli.byok
+        && let Err(code) = run_byok_persist_flow(
+            cli.auth_path.clone(),
+            cli.anthropic_key.clone(),
+            cli.openai_key.clone(),
+            cli.openai_base_url.clone(),
+        )
+    {
+        return code;
+    }
+
     // BYOK env plumbing happens here, on the still-single-threaded
     // main thread. Reading env vars is safe; `pi-mobile-client` is
     // `#![forbid(unsafe_code)]` so it cannot do this internally.
-    let env = ProviderEnv {
-        anthropic_key: std::env::var("ANTHROPIC_API_KEY").ok(),
-        anthropic_base_url: std::env::var("ANTHROPIC_BASE_URL").ok(),
-        openai_key: std::env::var("OPENAI_API_KEY").ok(),
-        openai_base_url: std::env::var("OPENAI_BASE_URL").ok(),
+    //
+    // When `--byok` was supplied with an `--anthropic-key` or
+    // `--openai-key` we also seed the matching env var so the rest of
+    // `resolve_provider` + `PiSessionConfig` plumbing reuses the same
+    // credential without forcing the caller to also export the env
+    // var. The on-disk credential persisted above is what subsequent
+    // (no-`--byok`) invocations consume.
+    let env = if cli.byok {
+        // When `--byok` was supplied, take the BYOK profile from the
+        // CLI flags verbatim and ignore any `*_API_KEY` env vars from
+        // the other provider so `--byok --openai-key ...` cannot be
+        // accidentally overridden by a leftover `ANTHROPIC_API_KEY`.
+        ProviderEnv {
+            anthropic_key: cli.anthropic_key.clone(),
+            anthropic_base_url: std::env::var("ANTHROPIC_BASE_URL").ok(),
+            openai_key: cli.openai_key.clone(),
+            openai_base_url: cli
+                .openai_base_url
+                .clone()
+                .or_else(|| std::env::var("OPENAI_BASE_URL").ok()),
+        }
+    } else {
+        ProviderEnv {
+            anthropic_key: std::env::var("ANTHROPIC_API_KEY").ok(),
+            anthropic_base_url: std::env::var("ANTHROPIC_BASE_URL").ok(),
+            openai_key: std::env::var("OPENAI_API_KEY").ok(),
+            openai_base_url: std::env::var("OPENAI_BASE_URL").ok(),
+        }
     };
+
+    // Surface a snapshot of the resolved auth state so the transcript
+    // shows the runner is reusing existing credentials (or operating
+    // unauthenticated when no key/OAuth was supplied). Skipped when
+    // `--oauth-paste` already emitted the post-handshake `authorized`
+    // line, since duplicating it would clutter the transcript.
+    let stored_snapshot = snapshot_anthropic_oauth(AnthropicOAuthConfig {
+        client_id: None,
+        client_secret: None,
+        auth_path: cli.auth_path.clone(),
+    });
+    let has_stored_oauth = matches!(
+        stored_snapshot,
+        AuthEvent::Authorized {
+            source: AuthEventSource::Oauth,
+            ..
+        }
+    );
+    if !cli.oauth_paste {
+        if has_stored_oauth {
+            emit_line(&TranscriptLine::OauthCredentialsLoaded { source: "oauth" });
+        }
+        emit_line(&auth_state_line(&stored_snapshot));
+    }
 
     let resolved = match resolve_provider(cli.provider.clone(), &env) {
         Ok(r) => r,
+        Err(err) if has_stored_oauth => {
+            tracing::debug!(
+                target: "pi_server_runner",
+                "no BYOK env key supplied; relying on stored Anthropic OAuth credential ({err})"
+            );
+            ResolvedProvider {
+                provider: Some("anthropic".to_string()),
+                api_key: None,
+                base_url: env.anthropic_base_url.clone(),
+            }
+        }
         Err(err) => {
-            eprintln!("pi-server-runner: {err}");
-            return ExitCode::from(2);
+            // Setup-only invocations (e.g. `--oauth-paste` without
+            // `--prompt`) legitimately have no key. Don't error out
+            // here if no prompt was supplied either; we'll exit at the
+            // resolve_prompt step below.
+            if cli.prompt.is_none() && !cli.stdin {
+                ResolvedProvider {
+                    provider: None,
+                    api_key: None,
+                    base_url: None,
+                }
+            } else {
+                eprintln!("pi-server-runner: {err}");
+                return ExitCode::from(2);
+            }
         }
     };
     let ResolvedProvider {
@@ -215,9 +407,21 @@ fn main() -> ExitCode {
     // existing default behavior.
     let model = pick_default_model(cli.model.clone(), provider.as_deref(), base_url.as_deref());
 
+    // Setup-only runs (`--oauth-paste` or `--byok` without a prompt)
+    // exit cleanly after persisting credentials, so platform callers
+    // can split "authorize" and "run prompt" into separate process
+    // invocations. We require `--prompt`/`--stdin` only when one of
+    // those setup flags is *not* present.
     let prompt_text = match resolve_prompt(&cli) {
         Ok(p) => p,
         Err(err) => {
+            if cli.oauth_paste || cli.byok {
+                tracing::info!(
+                    target: "pi_server_runner",
+                    "setup-only invocation complete (no prompt supplied); exiting"
+                );
+                return ExitCode::SUCCESS;
+            }
             eprintln!("pi-server-runner: {err}");
             return ExitCode::from(2);
         }
@@ -511,6 +715,146 @@ fn emit_line(line: &TranscriptLine) {
     }
 }
 
+/// Drive the Anthropic OAuth Authorization Code + PKCE handshake with
+/// a pasted redirect code. Prints the authorize URL on stdout (as a
+/// transcript line), attempts to open it via `open` when a TTY is
+/// attached, then reads the redirect code from stdin and persists the
+/// resulting tokens via the shared driver.
+fn run_oauth_paste_flow(auth_path: Option<PathBuf>) -> Result<(), ExitCode> {
+    let driver = AnthropicOAuthDriver::new(AnthropicOAuthConfig {
+        client_id: None,
+        client_secret: None,
+        auth_path: auth_path.clone(),
+    });
+
+    let (begin_event, handshake) = match driver.begin() {
+        Ok(pair) => pair,
+        Err(failure) => {
+            emit_line(&auth_state_line(&failure));
+            eprintln!("pi-server-runner: failed to build Anthropic authorize URL");
+            return Err(ExitCode::from(2));
+        }
+    };
+    emit_line(&auth_state_line(&begin_event));
+    let AuthorizeHandshake {
+        authorize_url,
+        verifier,
+        ..
+    } = handshake;
+    emit_line(&TranscriptLine::OauthAuthorizeUrl {
+        url: authorize_url.clone(),
+    });
+
+    // `open` is macOS-only and we don't want test invocations (which
+    // pipe stdin) to spawn a browser, so only auto-open when stdin and
+    // stdout are both TTYs and `open` actually exists on PATH.
+    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+        let _ = ShellCommand::new("open")
+            .arg(&authorize_url)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+    }
+
+    emit_line(&TranscriptLine::OauthPasteWaiting);
+    if std::io::stdin().is_terminal() {
+        let mut stdout = std::io::stdout();
+        let _ = write!(stdout, "Paste redirect code: ");
+        let _ = stdout.flush();
+    }
+
+    let mut code_input = String::new();
+    let stdin = std::io::stdin();
+    let read = stdin
+        .lock()
+        .read_line(&mut code_input)
+        .map_err(|err| {
+            eprintln!("pi-server-runner: failed to read redirect code: {err}");
+            ExitCode::from(2)
+        })?;
+    if read == 0 || code_input.trim().is_empty() {
+        eprintln!("pi-server-runner: redirect code was empty");
+        return Err(ExitCode::from(2));
+    }
+    let code_input = code_input.trim().to_string();
+
+    let outcome = complete_anthropic_oauth_paste(
+        AnthropicOAuthConfig {
+            client_id: None,
+            client_secret: None,
+            auth_path,
+        },
+        code_input,
+        verifier,
+    );
+    emit_line(&auth_state_line(&outcome));
+    match outcome {
+        AuthEvent::Authorized { .. } => Ok(()),
+        AuthEvent::Failed { reason } => {
+            eprintln!("pi-server-runner: oauth handshake failed: {reason}");
+            Err(ExitCode::from(1))
+        }
+        other => {
+            eprintln!(
+                "pi-server-runner: unexpected post-handshake auth state: {other:?}"
+            );
+            Err(ExitCode::from(1))
+        }
+    }
+}
+
+/// Persist a BYOK credential into pi's `auth.json` via the shared
+/// `pi_byok_set` helper. Accepts exactly one of `--anthropic-key`
+/// or `--openai-key`; the OpenAI path additionally records a base
+/// URL when supplied (so subsequent runs without `--byok` reuse the
+/// proxy via `OPENAI_BASE_URL` in the env).
+fn run_byok_persist_flow(
+    auth_path: Option<PathBuf>,
+    anthropic_key: Option<String>,
+    openai_key: Option<String>,
+    openai_base_url: Option<String>,
+) -> Result<(), ExitCode> {
+    let (provider, key) = match (anthropic_key, openai_key) {
+        (Some(a), None) => ("anthropic".to_string(), a),
+        (None, Some(o)) => ("openai".to_string(), o),
+        (Some(_), Some(_)) => {
+            eprintln!(
+                "pi-server-runner: --byok accepts exactly one of --anthropic-key or --openai-key"
+            );
+            return Err(ExitCode::from(2));
+        }
+        (None, None) => {
+            eprintln!(
+                "pi-server-runner: --byok requires --anthropic-key <KEY> or --openai-key <KEY> (with optional --openai-base-url <URL>)"
+            );
+            return Err(ExitCode::from(2));
+        }
+    };
+
+    if provider == "anthropic" && openai_base_url.is_some() {
+        eprintln!(
+            "pi-server-runner: --openai-base-url is only valid with --openai-key; ignoring"
+        );
+    }
+
+    let event = pi_byok_set_blocking(auth_path, provider.clone(), key);
+    emit_line(&auth_state_line(&event));
+    match event {
+        AuthEvent::Authorized { .. } => {
+            emit_line(&TranscriptLine::ByokApplied { provider });
+            Ok(())
+        }
+        AuthEvent::Failed { reason } => {
+            eprintln!("pi-server-runner: byok persist failed: {reason}");
+            Err(ExitCode::from(1))
+        }
+        other => {
+            eprintln!("pi-server-runner: unexpected byok auth state: {other:?}");
+            Err(ExitCode::from(1))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -697,5 +1041,199 @@ mod tests {
         let err = resolve_provider(None, &env).expect_err("must error with no creds");
         assert!(err.contains("ANTHROPIC_API_KEY"));
         assert!(err.contains("OPENAI_API_KEY"));
+    }
+
+    #[test]
+    fn oauth_paste_flag_parses() {
+        let cli = Cli::try_parse_from([
+            "pi-server-runner",
+            "--local",
+            "--oauth-paste",
+        ])
+        .expect("parse with --oauth-paste");
+        assert!(cli.oauth_paste);
+        assert!(!cli.byok);
+    }
+
+    #[test]
+    fn byok_anthropic_flag_parses() {
+        let cli = Cli::try_parse_from([
+            "pi-server-runner",
+            "--local",
+            "--byok",
+            "--anthropic-key",
+            "sk-ant-test",
+            "--prompt",
+            "hello",
+        ])
+        .expect("parse with --byok --anthropic-key");
+        assert!(cli.byok);
+        assert_eq!(cli.anthropic_key.as_deref(), Some("sk-ant-test"));
+        assert!(cli.openai_key.is_none());
+    }
+
+    #[test]
+    fn byok_openai_with_base_url_flag_parses() {
+        let cli = Cli::try_parse_from([
+            "pi-server-runner",
+            "--local",
+            "--byok",
+            "--openai-key",
+            "sk-oa-test",
+            "--openai-base-url",
+            "https://proxy.example/v1",
+            "--prompt",
+            "hello",
+        ])
+        .expect("parse with --byok --openai-* trio");
+        assert!(cli.byok);
+        assert_eq!(cli.openai_key.as_deref(), Some("sk-oa-test"));
+        assert_eq!(
+            cli.openai_base_url.as_deref(),
+            Some("https://proxy.example/v1")
+        );
+    }
+
+    #[test]
+    fn auth_state_line_maps_each_event_variant() {
+        match auth_state_line(&AuthEvent::Unauthenticated) {
+            TranscriptLine::AuthState {
+                state,
+                source,
+                reason,
+            } => {
+                assert_eq!(state, "unauthenticated");
+                assert!(source.is_none());
+                assert!(reason.is_none());
+            }
+            other => panic!("expected AuthState transcript line, got {other:?}"),
+        }
+
+        match auth_state_line(&AuthEvent::Authorizing) {
+            TranscriptLine::AuthState { state, .. } => assert_eq!(state, "authorizing"),
+            other => panic!("expected AuthState transcript line, got {other:?}"),
+        }
+
+        match auth_state_line(&AuthEvent::Authorized {
+            source: AuthEventSource::Oauth,
+        }) {
+            TranscriptLine::AuthState { state, source, .. } => {
+                assert_eq!(state, "authorized");
+                assert_eq!(source, Some("oauth"));
+            }
+            other => panic!("expected AuthState transcript line, got {other:?}"),
+        }
+
+        match auth_state_line(&AuthEvent::Authorized {
+            source: AuthEventSource::Byok,
+        }) {
+            TranscriptLine::AuthState { state, source, .. } => {
+                assert_eq!(state, "authorized");
+                assert_eq!(source, Some("byok"));
+            }
+            other => panic!("expected AuthState transcript line, got {other:?}"),
+        }
+
+        match auth_state_line(&AuthEvent::Failed {
+            reason: "boom".to_string(),
+        }) {
+            TranscriptLine::AuthState { state, reason, .. } => {
+                assert_eq!(state, "failed");
+                assert_eq!(reason.as_deref(), Some("boom"));
+            }
+            other => panic!("expected AuthState transcript line, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_byok_persist_flow_rejects_missing_key() {
+        let dir = tempfile::tempdir().expect("tmpdir");
+        let err =
+            run_byok_persist_flow(Some(dir.path().join("auth.json")), None, None, None)
+                .expect_err("missing key must error");
+        // ExitCode doesn't implement PartialEq directly; format via Debug.
+        assert!(
+            format!("{err:?}").contains('2'),
+            "missing-key path must exit 2, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn run_byok_persist_flow_anthropic_persists_credential() {
+        let dir = tempfile::tempdir().expect("tmpdir");
+        let auth_path = dir.path().join("auth.json");
+        run_byok_persist_flow(
+            Some(auth_path.clone()),
+            Some("sk-ant-runner-test".to_string()),
+            None,
+            None,
+        )
+        .expect("anthropic byok must succeed");
+
+        // After persistence the snapshot helper reports an
+        // `Authorized { source: Byok }` event — proof the credential
+        // was written and is reachable through pi's AuthStorage on a
+        // follow-up load.
+        let snap = snapshot_anthropic_oauth(AnthropicOAuthConfig {
+            client_id: None,
+            client_secret: None,
+            auth_path: Some(auth_path.clone()),
+        });
+        match snap {
+            AuthEvent::Authorized {
+                source: AuthEventSource::Byok,
+            } => {}
+            other => panic!("expected Authorized {{ Byok }}, got {other:?}"),
+        }
+
+        // And the file actually exists on disk.
+        assert!(auth_path.exists(), "auth.json must be created");
+    }
+
+    #[test]
+    fn run_byok_persist_flow_openai_records_provider_id() {
+        let dir = tempfile::tempdir().expect("tmpdir");
+        let auth_path = dir.path().join("auth.json");
+        run_byok_persist_flow(
+            Some(auth_path.clone()),
+            None,
+            Some("sk-oa-runner-test".to_string()),
+            Some("https://proxy.example/v1".to_string()),
+        )
+        .expect("openai byok must succeed");
+
+        // The OpenAI BYOK path does not register under the Anthropic
+        // provider id, so the OAuth snapshot helper (which looks up
+        // `anthropic`) must report `Unauthenticated`. This proves the
+        // persisted entry landed under a non-anthropic key without
+        // having to re-export pi's AuthStorage out of pi-mobile-client.
+        let snap = snapshot_anthropic_oauth(AnthropicOAuthConfig {
+            client_id: None,
+            client_secret: None,
+            auth_path: Some(auth_path.clone()),
+        });
+        assert_eq!(snap, AuthEvent::Unauthenticated);
+        assert!(auth_path.exists(), "auth.json must be created");
+        let contents = std::fs::read_to_string(&auth_path).expect("read auth.json");
+        assert!(
+            contents.contains("\"openai\""),
+            "auth.json should record the openai provider entry, got: {contents}"
+        );
+    }
+
+    #[test]
+    fn run_byok_persist_flow_rejects_both_keys() {
+        let dir = tempfile::tempdir().expect("tmpdir");
+        let err = run_byok_persist_flow(
+            Some(dir.path().join("auth.json")),
+            Some("a".to_string()),
+            Some("b".to_string()),
+            None,
+        )
+        .expect_err("both keys must error");
+        assert!(
+            format!("{err:?}").contains('2'),
+            "both-keys path must exit 2, got {err:?}"
+        );
     }
 }

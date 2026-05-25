@@ -4394,6 +4394,7 @@ dependencies = [
  "pi-mobile-client",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

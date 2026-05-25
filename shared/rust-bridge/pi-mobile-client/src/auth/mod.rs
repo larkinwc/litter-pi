@@ -5,8 +5,15 @@
 //! alongside it in subsequent features.
 
 pub mod anthropic_oauth;
+pub mod blocking;
+pub mod byok;
 
 pub use anthropic_oauth::{
     AnthropicOAuthConfig, AnthropicOAuthDriver, AuthEvent, AuthEventSource, AuthorizeHandshake,
     CLIENT_ID_ENV, CLIENT_SECRET_ENV, ANTHROPIC_PROVIDER_ID,
 };
+pub use blocking::{
+    complete_anthropic_oauth_paste, pi_byok_set_blocking, refresh_anthropic_oauth,
+    snapshot_anthropic_oauth,
+};
+pub use byok::{ByokConfig, pi_byok_set};
