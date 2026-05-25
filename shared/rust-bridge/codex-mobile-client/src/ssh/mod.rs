@@ -28,6 +28,7 @@ mod detect;
 mod exec;
 mod forwarding;
 mod keychain;
+mod pi_binary;
 mod port_forward;
 mod probes;
 mod resolve_binary;
