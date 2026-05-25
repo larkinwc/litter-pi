@@ -25,6 +25,7 @@ use tracing::{debug, info, warn};
 
 use crate::logging::{LogLevelName, log_rust};
 use crate::session::remote_transport::{Reconnected, RemoteTransport, SessionKeepalive};
+use crate::ssh::pi_bootstrap::{SshSessionConfig, bootstrap_pi_server};
 use crate::ssh::{RemoteShell, SshBootstrapResult, SshBootstrapTransport, SshClient};
 use crate::transport::{RpcError, TransportError};
 use crate::types::AgentRuntimeKind;
@@ -42,6 +43,92 @@ pub(crate) struct SshReconnectTransport {
     pub(crate) remote_shell: RemoteShell,
     pub(crate) working_dir: Option<String>,
     pub(crate) ssh_pid: Option<Arc<StdMutex<Option<u32>>>>,
+}
+
+/// Connect-and-reconnect strategy for a remote `pi acp` runtime.
+///
+/// Mirrors `SshReconnectTransport`: the transport owns its `SshSessionConfig`
+/// and re-runs the same `bootstrap_pi_server` flow on a forced drop. The
+/// session config captured at construction time is reused verbatim — the
+/// transport never re-derives the host/user/key from the live russh handle,
+/// so any later `reconnect()` is guaranteed to talk to the same host with
+/// the same credentials.
+pub(crate) struct PiReconnectTransport {
+    pub(crate) host_config: SshSessionConfig,
+    pub(crate) bootstrap: Arc<dyn PiBootstrapFn>,
+}
+
+/// Hook used by `PiReconnectTransport` to spawn `pi acp` and connect a
+/// JSON-line client. Production callers wire this to
+/// [`bootstrap_pi_server`] via [`DefaultPiBootstrapFn`]; tests
+/// substitute a recorder so they can assert that the same
+/// `SshSessionConfig` is reused across reconnects without booting a
+/// real SSH stack.
+#[async_trait::async_trait]
+pub(crate) trait PiBootstrapFn: Send + Sync + 'static {
+    async fn run(&self, config: &SshSessionConfig) -> Result<AppServerClient, TransportError>;
+}
+
+pub(crate) struct DefaultPiBootstrapFn {
+    pub(crate) ssh_client: Arc<SshClient>,
+}
+
+#[async_trait::async_trait]
+impl PiBootstrapFn for DefaultPiBootstrapFn {
+    async fn run(&self, config: &SshSessionConfig) -> Result<AppServerClient, TransportError> {
+        let client = bootstrap_pi_server(Arc::clone(&self.ssh_client), config)
+            .await
+            .map_err(|e| TransportError::ConnectionFailed(e.to_string()))?;
+        Ok(AppServerClient::Remote(client))
+    }
+}
+
+impl PiReconnectTransport {
+    /// Build a transport for the `pi acp` runtime. Runs the initial
+    /// `bootstrap_pi_server` call eagerly so callers can hand the
+    /// returned `AppServerClient` straight to
+    /// `connect_remote_multiplexed`, while the transport retains the
+    /// config for later reconnects.
+    pub(crate) async fn connect(
+        ssh_client: Arc<SshClient>,
+        host_config: SshSessionConfig,
+    ) -> Result<(Self, AppServerClient), TransportError> {
+        let bootstrap: Arc<dyn PiBootstrapFn> = Arc::new(DefaultPiBootstrapFn { ssh_client });
+        Self::connect_with(host_config, bootstrap).await
+    }
+
+    pub(crate) async fn connect_with(
+        host_config: SshSessionConfig,
+        bootstrap: Arc<dyn PiBootstrapFn>,
+    ) -> Result<(Self, AppServerClient), TransportError> {
+        let client = bootstrap.run(&host_config).await?;
+        Ok((
+            Self {
+                host_config,
+                bootstrap,
+            },
+            client,
+        ))
+    }
+}
+
+#[async_trait::async_trait]
+impl RemoteTransport for PiReconnectTransport {
+    async fn reconnect(
+        &self,
+        _args: &RemoteAppServerConnectArgs,
+        _websocket_url: &str,
+    ) -> Result<Reconnected, TransportError> {
+        // Re-run the exact same bootstrap path with the exact same
+        // `SshSessionConfig`. The config is captured by value at
+        // construction time, so a forced drop cannot smuggle in
+        // different credentials.
+        let client = self.bootstrap.run(&self.host_config).await?;
+        Ok(Reconnected {
+            client,
+            keepalive: None,
+        })
+    }
 }
 
 #[derive(Clone)]

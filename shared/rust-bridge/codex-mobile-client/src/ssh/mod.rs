@@ -29,6 +29,9 @@ mod exec;
 mod forwarding;
 mod keychain;
 mod pi_binary;
+pub mod pi_bootstrap;
+#[cfg(test)]
+mod pi_reconnect;
 mod port_forward;
 mod probes;
 mod resolve_binary;
