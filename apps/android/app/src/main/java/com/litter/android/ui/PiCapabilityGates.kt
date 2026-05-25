@@ -1,7 +1,7 @@
 package com.litter.android.ui
 
 import androidx.compose.runtime.Composable
-import uniffi.codex_mobile_client.AgentRuntimeKind
+import uniffi.codex_mobile_client.AlleycatAgentRuntimeKind
 
 /**
  * Capability gates for the Pi runtime on Android.
@@ -9,25 +9,25 @@ import uniffi.codex_mobile_client.AgentRuntimeKind
  * Mirrors the iOS `PiCapabilityGates` surface: server-side enforcement
  * (network, plans, voice) lives in shared Rust on the connection layer;
  * this object exists purely as a render-time gate so Android UI hides
- * surfaces that do not exist for `AgentRuntimeKind.Pi` runtimes.
+ * surfaces that do not exist for `AlleycatAgentRuntimeKind.Pi` runtimes.
  *
  * Today Pi runs in-process with no realtime voice transport and no app
  * plans flow, so both surfaces are hidden whenever the active runtime
- * is `AgentRuntimeKind.Pi`. All other runtimes keep their existing
- * surfaces.
+ * is `AlleycatAgentRuntimeKind.Pi`. All other runtimes keep their
+ * existing surfaces.
  */
 object PiCapabilityGates {
     /** Whether the realtime voice launcher is visible for [runtime]. */
-    fun isVoiceVisible(runtime: AgentRuntimeKind): Boolean =
+    fun isVoiceVisible(runtime: AlleycatAgentRuntimeKind): Boolean =
         when (runtime) {
-            AgentRuntimeKind.PI -> false
+            AlleycatAgentRuntimeKind.PI -> false
             else -> true
         }
 
     /** Whether the app/plan surfaces are visible for [runtime]. */
-    fun isPlansVisible(runtime: AgentRuntimeKind): Boolean =
+    fun isPlansVisible(runtime: AlleycatAgentRuntimeKind): Boolean =
         when (runtime) {
-            AgentRuntimeKind.PI -> false
+            AlleycatAgentRuntimeKind.PI -> false
             else -> true
         }
 }
@@ -39,7 +39,7 @@ object PiCapabilityGates {
  * sites stay declarative.
  */
 @Composable
-fun PiVoiceGate(runtime: AgentRuntimeKind, content: @Composable () -> Unit) {
+fun PiVoiceGate(runtime: AlleycatAgentRuntimeKind, content: @Composable () -> Unit) {
     if (PiCapabilityGates.isVoiceVisible(runtime)) {
         content()
     }
@@ -50,7 +50,7 @@ fun PiVoiceGate(runtime: AgentRuntimeKind, content: @Composable () -> Unit) {
  * current [runtime] permits the plans surface.
  */
 @Composable
-fun PiPlansGate(runtime: AgentRuntimeKind, content: @Composable () -> Unit) {
+fun PiPlansGate(runtime: AlleycatAgentRuntimeKind, content: @Composable () -> Unit) {
     if (PiCapabilityGates.isPlansVisible(runtime)) {
         content()
     }

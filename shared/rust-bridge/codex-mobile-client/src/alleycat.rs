@@ -20,18 +20,22 @@ use crate::transport::TransportError;
 use crate::types::AgentRuntimeKind as AgentRuntimeKindId;
 
 /// Typed enum form of the canonical runtime kinds litter knows about,
-/// including the `AgentRuntimeKind::Pi` arm used to gate Pi runtime
-/// behavior across mobile (kotlin `AgentRuntimeKind.Pi` / `PI`). The
-/// stringly-typed [`crate::types::AgentRuntimeKind`] remains the public
-/// boundary type used across UniFFI (so new alleycat-advertised agents
-/// work without a litter release), but features that need typed
-/// pattern-matching — e.g. wiring an in-process pi runtime — go through
-/// this enum.
+/// including the `AlleycatAgentRuntimeKind::Pi` arm used to gate Pi
+/// runtime behavior across mobile (kotlin
+/// `AlleycatAgentRuntimeKind.Pi` / `PI`). The stringly-typed
+/// [`crate::types::AgentRuntimeKind`] remains the public boundary type
+/// used across UniFFI (so new alleycat-advertised agents work without
+/// a litter release), but features that need typed pattern-matching —
+/// e.g. wiring an in-process pi runtime — go through this enum.
+///
+/// The UniFFI export name is `AlleycatAgentRuntimeKind` to avoid a
+/// symbol clash with the iOS Swift-side `AgentRuntimeKind` typealias
+/// (and to keep the Android Kotlin reference unambiguous as well).
 ///
 /// `serde` round-trips through the canonical lowercase id (`"codex"`,
 /// `"pi"`, `"claude"`, …), matching the stringly-typed boundary value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
-pub enum AgentRuntimeKind {
+pub enum AlleycatAgentRuntimeKind {
     #[serde(rename = "codex")]
     Codex,
     #[serde(rename = "pi")]
@@ -48,7 +52,7 @@ pub enum AgentRuntimeKind {
     Hermes,
 }
 
-impl AgentRuntimeKind {
+impl AlleycatAgentRuntimeKind {
     /// Stable lowercase id (matches the `serde` rename) used for the
     /// stringly-typed UniFFI boundary value.
     pub fn as_id(self) -> &'static str {
@@ -1122,18 +1126,19 @@ mod tests {
 
     #[test]
     fn agent_runtime_kind_pi_roundtrip() {
-        let json = serde_json::to_value(AgentRuntimeKind::Pi).expect("serialize");
+        let json = serde_json::to_value(AlleycatAgentRuntimeKind::Pi).expect("serialize");
         assert_eq!(json, serde_json::json!("pi"));
 
-        let parsed: AgentRuntimeKind = serde_json::from_value(json).expect("deserialize");
-        assert_eq!(parsed, AgentRuntimeKind::Pi);
+        let parsed: AlleycatAgentRuntimeKind =
+            serde_json::from_value(json).expect("deserialize");
+        assert_eq!(parsed, AlleycatAgentRuntimeKind::Pi);
 
         // The typed enum must align with the canonicalized stringly-typed
         // id produced by `agent_runtime_kind()` for the same agent names.
-        assert_eq!(AgentRuntimeKind::Pi.as_id(), "pi");
+        assert_eq!(AlleycatAgentRuntimeKind::Pi.as_id(), "pi");
         assert_eq!(
             agent_runtime_kind("pi", "pi"),
-            Some(AgentRuntimeKind::Pi.into_id())
+            Some(AlleycatAgentRuntimeKind::Pi.into_id())
         );
     }
 }
