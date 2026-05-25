@@ -343,6 +343,82 @@ mod tests {
         format!("http://{addr}/oauth/token")
     }
 
+    /// Spawn a single-shot local TCP server that captures the inbound
+    /// request body, returns the configured success body, and reports
+    /// the captured body back via the returned channel. Used by the
+    /// happy-path refresh test to assert the outbound POST body shape
+    /// (`grant_type=refresh_token` + the known refresh token) and to
+    /// return a rotated refresh token in the response.
+    fn spawn_oneshot_capture(body: &str) -> (String, std::sync::mpsc::Receiver<String>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind oneshot");
+        let addr = listener.local_addr().expect("addr");
+        let body = body.to_string();
+        let (tx, rx) = mpsc::channel::<String>();
+        std::thread::spawn(move || {
+            if let Ok((mut sock, _)) = listener.accept() {
+                let _ = sock.set_read_timeout(Some(std::time::Duration::from_millis(250)));
+                // Read until we've parsed headers and consumed the
+                // declared Content-Length body. Reading in a single
+                // call is unreliable because some HTTP clients flush
+                // headers and body separately, so accumulate until we
+                // either have the full body or a read times out.
+                let mut acc: Vec<u8> = Vec::with_capacity(4096);
+                let mut tmp = [0u8; 4096];
+                let mut content_length: Option<usize> = None;
+                let mut header_end: Option<usize> = None;
+                loop {
+                    match sock.read(&mut tmp) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            acc.extend_from_slice(&tmp[..n]);
+                            if header_end.is_none()
+                                && let Some(idx) = acc
+                                    .windows(4)
+                                    .position(|w| w == b"\r\n\r\n")
+                            {
+                                header_end = Some(idx + 4);
+                                let header_text =
+                                    String::from_utf8_lossy(&acc[..idx]).to_string();
+                                for line in header_text.split("\r\n") {
+                                    if let Some(rest) =
+                                        line.to_ascii_lowercase().strip_prefix("content-length:")
+                                    {
+                                        if let Ok(parsed) = rest.trim().parse::<usize>() {
+                                            content_length = Some(parsed);
+                                        }
+                                    }
+                                }
+                            }
+                            if let (Some(end), Some(len)) = (header_end, content_length)
+                                && acc.len() >= end + len
+                            {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let request_body = match header_end {
+                    Some(end) => String::from_utf8_lossy(&acc[end..]).into_owned(),
+                    None => String::new(),
+                };
+                let _ = tx.send(request_body);
+
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = sock.write_all(response.as_bytes());
+                let _ = sock.flush();
+            }
+        });
+        (format!("http://{addr}/oauth/token"), rx)
+    }
+
     /// Stub a known-invalid refresh token in `auth.json`. The token is
     /// already expired (timestamp 0) so
     /// `refresh_expired_oauth_tokens_with_client` will attempt a real
@@ -364,6 +440,129 @@ mod tests {
             },
         );
         storage.save().expect("save seed");
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn refresh_rotates_expired_oauth_token_in_storage() {
+        let dir = tempfile::tempdir().expect("tmpdir");
+        let auth_path = dir.path().join("auth.json");
+
+        const NEW_ACCESS_TOKEN: &str = "rotated-access-token-value";
+        const NEW_REFRESH_TOKEN: &str = "rotated-refresh-token-value";
+        const KNOWN_REFRESH_TOKEN: &str = "known-refresh-token-value";
+        const EXPIRES_IN_SECONDS: u64 = 3_600;
+
+        // Stand up a one-shot success server that returns a rotated
+        // access_token + refresh_token. We capture the inbound request
+        // body to assert the outbound POST shape.
+        let body = format!(
+            "{{\"access_token\":\"{NEW_ACCESS_TOKEN}\",\"refresh_token\":\"{NEW_REFRESH_TOKEN}\",\"expires_in\":{EXPIRES_IN_SECONDS}}}"
+        );
+        let (token_url, request_rx) = spawn_oneshot_capture(&body);
+
+        // SAFETY: setting our own process env var. Tests in this crate
+        // run sequentially with respect to the
+        // `PI_ANTHROPIC_OAUTH_TOKEN_URL` override.
+        unsafe {
+            std::env::set_var("PI_ANTHROPIC_OAUTH_TOKEN_URL", &token_url);
+        }
+
+        // Seed an expired OAuth credential whose stored token_url +
+        // client_id route refresh requests at the one-shot mock.
+        {
+            let mut storage = AuthStorage::load(auth_path.clone()).expect("load");
+            storage.set(
+                ANTHROPIC_PROVIDER_ID,
+                AuthCredential::OAuth {
+                    // ubs:ignore deliberate test fixture; not a real token.
+                    access_token: "expired-access".to_string(),
+                    // ubs:ignore deliberate test fixture; not a real token.
+                    refresh_token: KNOWN_REFRESH_TOKEN.to_string(),
+                    expires: 0,
+                    token_url: Some(token_url.clone()),
+                    client_id: Some("test-client".to_string()),
+                },
+            );
+            storage.save().expect("save seed");
+        }
+
+        let driver = AnthropicOAuthDriver::new(AnthropicOAuthConfig {
+            client_id: Some("test-client".to_string()),
+            client_secret: None,
+            auth_path: Some(auth_path.clone()),
+        });
+
+        let reactor = asupersync::runtime::reactor::create_reactor().expect("reactor");
+        let rt = asupersync::runtime::RuntimeBuilder::current_thread()
+            .with_reactor(reactor)
+            .build()
+            .expect("runtime");
+        let event = rt.block_on(driver.refresh());
+
+        assert_eq!(
+            event,
+            AuthEvent::Authorized {
+                source: AuthEventSource::Oauth,
+            },
+            "happy-path refresh must surface AuthEvent::Authorized {{ source: Oauth }}"
+        );
+
+        // Assert the outbound POST body has the expected shape. The
+        // pi anthropic refresh path posts JSON, so we parse the body
+        // as JSON and look for `grant_type=refresh_token` plus the
+        // known refresh token value.
+        let captured = request_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("captured request body");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&captured).expect("inbound body parses as JSON");
+        assert_eq!(
+            parsed.get("grant_type").and_then(|v| v.as_str()),
+            Some("refresh_token"),
+            "inbound POST body must declare grant_type=refresh_token: {captured}"
+        );
+        assert_eq!(
+            parsed.get("refresh_token").and_then(|v| v.as_str()),
+            Some(KNOWN_REFRESH_TOKEN),
+            "inbound POST body must echo the stored refresh_token: {captured}"
+        );
+
+        // The on-disk auth.json must now hold the rotated access token
+        // with an expires > now, and the rotated refresh token returned
+        // by the mock.
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time")
+            .as_millis() as i64;
+        let reloaded = AuthStorage::load(auth_path.clone()).expect("reload");
+        match reloaded.get(ANTHROPIC_PROVIDER_ID) {
+            Some(AuthCredential::OAuth {
+                access_token,
+                refresh_token,
+                expires,
+                ..
+            }) => {
+                assert_eq!(
+                    access_token, NEW_ACCESS_TOKEN,
+                    "auth.json must persist the rotated access_token"
+                );
+                assert_eq!(
+                    refresh_token, NEW_REFRESH_TOKEN,
+                    "auth.json must persist whatever refresh_token the server returned"
+                );
+                assert!(
+                    *expires > now_ms,
+                    "expires ({expires}) must be in the future after refresh (now_ms={now_ms})"
+                );
+            }
+            other => panic!("expected refreshed OAuth credential, got {other:?}"),
+        }
+
+        // SAFETY: scoped cleanup of the env override set above.
+        unsafe {
+            std::env::remove_var("PI_ANTHROPIC_OAUTH_TOKEN_URL");
+        }
     }
 
     #[test]
