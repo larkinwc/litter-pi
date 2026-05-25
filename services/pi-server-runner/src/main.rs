@@ -51,7 +51,8 @@ use std::time::Duration;
 use clap::{Parser, ValueEnum};
 use pi_mobile_client::auth::{
     AnthropicOAuthConfig, AnthropicOAuthDriver, AuthEvent, AuthEventSource, AuthorizeHandshake,
-    complete_anthropic_oauth_paste, pi_byok_set_blocking, snapshot_anthropic_oauth,
+    ClaudeImportConfig, ClaudeImportSummary, complete_anthropic_oauth_paste,
+    import_claude_credentials, pi_byok_set_blocking, snapshot_anthropic_oauth,
 };
 use pi_mobile_client::{
     Command, InProcessStartArgs, PiEvent, PiSessionConfig, ToolFactoryKind, start_in_process,
@@ -163,6 +164,22 @@ struct Cli {
     #[arg(long, value_name = "URL")]
     openai_base_url: Option<String>,
 
+    /// Import an Anthropic OAuth credential from a Claude
+    /// Code-shaped credentials JSON file into pi's `auth.json`. The
+    /// JSON path is read from `--credentials-path <PATH>` or, when
+    /// that flag is omitted, from the `CLAUDE_CREDENTIALS_JSON_PATH`
+    /// environment variable. The runner exits 0 on success and a
+    /// nonzero code with a clear stderr message on parse/IO failure.
+    /// Combine with `--auth-path` to redirect the destination away
+    /// from the user's installed credentials during validation runs.
+    #[arg(long)]
+    import_claude_credentials: bool,
+
+    /// Path to the Claude Code credentials JSON file to import. Only
+    /// honoured with `--import-claude-credentials`.
+    #[arg(long, value_name = "PATH")]
+    credentials_path: Option<PathBuf>,
+
     /// Override the on-disk path of pi's `auth.json`. Defaults to
     /// pi's `Config::auth_path()` (honours `PI_CODING_AGENT_DIR`).
     /// Mostly intended for tests and for redirecting the auth store
@@ -228,6 +245,13 @@ enum TranscriptLine {
     ByokApplied {
         provider: String,
     },
+    ClaudeCredentialsImported {
+        provider: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        email: Option<String>,
+        expires_ms: i64,
+        expires_in_ms: i64,
+    },
 }
 
 fn auth_state_line(event: &AuthEvent) -> TranscriptLine {
@@ -279,6 +303,19 @@ fn main() -> ExitCode {
             "pi-server-runner: --local is the only supported mode in this milestone; rerun with --local."
         );
         return ExitCode::from(2);
+    }
+
+    // Cross-client OAuth reuse: import a Claude Code-shaped
+    // credentials JSON into pi's auth.json. Runs before OAuth/BYOK
+    // so the imported anthropic credential is the baseline that the
+    // remaining setup flags (if any) override.
+    if cli.import_claude_credentials
+        && let Err(code) = run_claude_credentials_import_flow(
+            cli.auth_path.clone(),
+            cli.credentials_path.clone(),
+        )
+    {
+        return code;
     }
 
     // OAuth paste-back handshake. Runs before BYOK so that a single
@@ -415,7 +452,7 @@ fn main() -> ExitCode {
     let prompt_text = match resolve_prompt(&cli) {
         Ok(p) => p,
         Err(err) => {
-            if cli.oauth_paste || cli.byok {
+            if cli.oauth_paste || cli.byok || cli.import_claude_credentials {
                 tracing::info!(
                     target: "pi_server_runner",
                     "setup-only invocation complete (no prompt supplied); exiting"
@@ -855,6 +892,80 @@ fn run_byok_persist_flow(
     }
 }
 
+/// Import an Anthropic OAuth credential from a Claude
+/// Code-shaped credentials JSON file. The credentials path is
+/// resolved from `--credentials-path` first, then from
+/// `CLAUDE_CREDENTIALS_JSON_PATH`. The raw token values never appear
+/// in any emitted transcript line or stderr message — only the
+/// redacted summary (provider, email, expires-in-ms) is logged.
+fn run_claude_credentials_import_flow(
+    auth_path: Option<PathBuf>,
+    credentials_path: Option<PathBuf>,
+) -> Result<(), ExitCode> {
+    let path = credentials_path
+        .or_else(|| std::env::var("CLAUDE_CREDENTIALS_JSON_PATH").ok().map(PathBuf::from));
+    let path = match path {
+        Some(p) => p,
+        None => {
+            eprintln!(
+                "pi-server-runner: --import-claude-credentials requires --credentials-path <PATH> or CLAUDE_CREDENTIALS_JSON_PATH"
+            );
+            return Err(ExitCode::from(2));
+        }
+    };
+    let json_text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) => {
+            eprintln!(
+                "pi-server-runner: could not read claude credentials at {}: {err}",
+                path.display()
+            );
+            return Err(ExitCode::from(2));
+        }
+    };
+    let outcome = import_claude_credentials(
+        &ClaudeImportConfig {
+            auth_path: auth_path.clone(),
+        },
+        &json_text,
+    );
+    emit_line(&auth_state_line(&outcome.event));
+    match (outcome.event, outcome.summary) {
+        (AuthEvent::Authorized { .. }, Some(summary)) => {
+            log_claude_summary(&summary);
+            emit_line(&TranscriptLine::ClaudeCredentialsImported {
+                provider: summary.provider,
+                email: summary.email,
+                expires_ms: summary.expires_ms,
+                expires_in_ms: summary.expires_in_ms,
+            });
+            Ok(())
+        }
+        (AuthEvent::Failed { reason }, _) => {
+            eprintln!("pi-server-runner: claude import failed: {reason}");
+            Err(ExitCode::from(1))
+        }
+        (other, _) => {
+            eprintln!(
+                "pi-server-runner: unexpected post-import auth state: {other:?}"
+            );
+            Err(ExitCode::from(1))
+        }
+    }
+}
+
+fn log_claude_summary(summary: &ClaudeImportSummary) {
+    // The summary intentionally carries only non-secret metadata.
+    // Tokens never reach tracing here.
+    tracing::info!(
+        target: "pi_server_runner",
+        provider = %summary.provider,
+        email = %summary.email.clone().unwrap_or_else(|| "<none>".to_string()),
+        expires_in_ms = summary.expires_in_ms,
+        "imported anthropic oauth credential from claude credentials file"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1219,6 +1330,84 @@ mod tests {
             contents.contains("\"openai\""),
             "auth.json should record the openai provider entry, got: {contents}"
         );
+    }
+
+    #[test]
+    fn import_claude_credentials_flag_parses() {
+        let cli = Cli::try_parse_from([
+            "pi-server-runner",
+            "--local",
+            "--import-claude-credentials",
+            "--credentials-path",
+            "/tmp/claude-creds.json",
+        ])
+        .expect("parse with --import-claude-credentials");
+        assert!(cli.import_claude_credentials);
+        assert_eq!(
+            cli.credentials_path.as_deref().and_then(|p| p.to_str()),
+            Some("/tmp/claude-creds.json")
+        );
+    }
+
+    #[test]
+    fn run_claude_credentials_import_flow_rejects_missing_path() {
+        // Clear CLAUDE_CREDENTIALS_JSON_PATH so the flag can't pick
+        // up a stale ambient value while this test runs in isolation.
+        // SAFETY: scoped env removal mirrored at the end of the test.
+        let prior = std::env::var("CLAUDE_CREDENTIALS_JSON_PATH").ok();
+        // SAFETY: env mutation is intentional for this test scope.
+        unsafe {
+            std::env::remove_var("CLAUDE_CREDENTIALS_JSON_PATH");
+        }
+        let dir = tempfile::tempdir().expect("tmpdir");
+        let result = run_claude_credentials_import_flow(
+            Some(dir.path().join("auth.json")),
+            None,
+        );
+        let err = result.expect_err("missing path must error");
+        assert!(
+            format!("{err:?}").contains('2'),
+            "missing-path must exit 2, got {err:?}"
+        );
+        // SAFETY: restore prior env value.
+        unsafe {
+            if let Some(v) = prior {
+                std::env::set_var("CLAUDE_CREDENTIALS_JSON_PATH", v);
+            }
+        }
+    }
+
+    #[test]
+    fn run_claude_credentials_import_flow_persists_oauth_entry() {
+        let dir = tempfile::tempdir().expect("tmpdir");
+        let creds_path = dir.path().join("claude-creds.json");
+        // Clearly-fake values — never use real Anthropic tokens here.
+        let creds_json = r#"{
+            "access_token": "sk-ant-oat01-RUNNER-FAKE-ACCESS",
+            "refresh_token": "sk-ant-ort01-RUNNER-FAKE-REFRESH",
+            "expired": "2026-05-26T05:16:09+08:00",
+            "email": "tester@example.com",
+            "type": "claude"
+        }"#;
+        std::fs::write(&creds_path, creds_json).expect("write creds");
+        let auth_path = dir.path().join("auth.json");
+        run_claude_credentials_import_flow(
+            Some(auth_path.clone()),
+            Some(creds_path),
+        )
+        .expect("import must succeed");
+        // The snapshot helper observes the imported OAuth credential.
+        let snap = snapshot_anthropic_oauth(AnthropicOAuthConfig {
+            client_id: None,
+            client_secret: None,
+            auth_path: Some(auth_path),
+        });
+        match snap {
+            AuthEvent::Authorized {
+                source: AuthEventSource::Oauth,
+            } => {}
+            other => panic!("expected Authorized {{ Oauth }}, got {other:?}"),
+        }
     }
 
     #[test]

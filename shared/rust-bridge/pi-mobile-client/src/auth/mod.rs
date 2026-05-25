@@ -7,6 +7,7 @@
 pub mod anthropic_oauth;
 pub mod blocking;
 pub mod byok;
+pub mod claude_import;
 
 pub use anthropic_oauth::{
     AnthropicOAuthConfig, AnthropicOAuthDriver, AuthEvent, AuthEventSource, AuthorizeHandshake,
@@ -17,3 +18,7 @@ pub use blocking::{
     snapshot_anthropic_oauth,
 };
 pub use byok::{ByokConfig, pi_byok_set};
+pub use claude_import::{
+    anthropic_oauth_client_id, anthropic_oauth_token_url, import_claude_credentials,
+    ClaudeImportConfig, ClaudeImportOutcome, ClaudeImportSummary,
+};

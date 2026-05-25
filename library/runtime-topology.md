@@ -64,3 +64,16 @@ We intend to file an upstream PR against
    `[patch.crates-io]` entry entirely).
 
 Until that lands and is released, the vendored copy stays in tree.
+
+## Cross-client OAuth reuse (claude-credentials import)
+
+To re-use an existing Claude Code Anthropic OAuth credential without a
+fresh interactive sign-in, run
+`pi-server-runner --import-claude-credentials --credentials-path <PATH>`
+(or set `CLAUDE_CREDENTIALS_JSON_PATH`). The runner parses the Claude
+Code JSON (`access_token`, `refresh_token`, ISO 8601 `expired`),
+stamps pi's anthropic `client_id` + `token_url`, and writes the
+credential under the `anthropic` provider key in pi's `auth.json` via
+the shared `AuthStorage` file-locking path. Existing non-anthropic
+entries are preserved. Tokens never appear in logs — only a redacted
+summary (provider, email, expires-in-ms) is emitted.
