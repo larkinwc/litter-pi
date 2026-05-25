@@ -19,15 +19,18 @@ use crate::session::remote_transport::{Reconnected, RemoteTransport, SessionKeep
 use crate::transport::TransportError;
 use crate::types::AgentRuntimeKind as AgentRuntimeKindId;
 
-/// Typed enum form of the canonical runtime kinds litter knows about. The
+/// Typed enum form of the canonical runtime kinds litter knows about,
+/// including the `AgentRuntimeKind::Pi` arm used to gate Pi runtime
+/// behavior across mobile (kotlin `AgentRuntimeKind.Pi` / `PI`). The
 /// stringly-typed [`crate::types::AgentRuntimeKind`] remains the public
-/// boundary type used across UniFFI (so new alleycat-advertised agents work
-/// without a litter release), but features that need typed pattern-matching
-/// — e.g. wiring an in-process pi runtime — go through this enum.
+/// boundary type used across UniFFI (so new alleycat-advertised agents
+/// work without a litter release), but features that need typed
+/// pattern-matching — e.g. wiring an in-process pi runtime — go through
+/// this enum.
 ///
 /// `serde` round-trips through the canonical lowercase id (`"codex"`,
 /// `"pi"`, `"claude"`, …), matching the stringly-typed boundary value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
 pub enum AgentRuntimeKind {
     #[serde(rename = "codex")]
     Codex,

@@ -39,6 +39,12 @@ Current automated checks:
 | Thread turn pagination (v0.125+ remote) | Conversation opens with last 5 turns; "Load earlier messages" button fetches older 5-turn pages via `thread/turns/list` | Same |
 | Thread turn pagination fallback (v0.124 remote) | Capability flips off via response inspection; embedded turns load fully; "Load earlier" button hidden | Same |
 
+## Pi Runtime Parity
+
+| Area | Android UI manual QA | Substitute coverage |
+|---|---|---|
+| Pi runtime (in-process + BYOK + capability gates) | **Deferred** — no Android emulator is available on the worker host, so the Compose UI shell for `AgentRuntimeKind.Pi` (Anthropic OAuth screen, `PiCapabilityGates` hiding voice + plans, BYOK settings entry) cannot be exercised interactively yet. Pi ships iOS-first; Android UI manual QA picks up once an emulator / device is available. | Shared Rust pi runtime, in-process tool factory, BYOK plumbing, and Anthropic OAuth handshake are validated host-side via `cargo test -p codex-mobile-client` / `cargo test -p pi-mobile-client` / `cargo test -p pi-server-runner` plus the `pi-server-runner --local` / `--byok` / `--oauth-paste` modes. Android Rust cross-compile is gated through `cargo ndk -t arm64-v8a -t x86_64 build -p pi-mobile-client`. Kotlin UniFFI bindings expose `AgentRuntimeKind.Pi`, and the Android Compose UI files (`AnthropicOAuthScreen.kt`, `PiCapabilityGates.kt`) are validated by grep-shape checks only. |
+
 ## Terminal UX Matrix
 
 The terminal screen renders through Ghostty on both platforms; this section
