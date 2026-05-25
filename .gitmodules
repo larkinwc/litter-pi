@@ -10,3 +10,6 @@
 	path = shared/third_party/pi_agent_rust
 	url = https://github.com/larkinwc/pi_agent_rust.git
 	branch = mission/ios-bindgen-gate
+[submodule "asupersync"]
+	path = shared/third_party/asupersync
+	url = https://github.com/Dicklesworthstone/asupersync.git

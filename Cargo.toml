@@ -23,3 +23,12 @@ futures = "0.3"
 tracing = "0.1"
 async-trait = "0.1"
 serde_json = "1"
+
+# Vendored asupersync 0.3.2 + minimal reactor cfg patches that add
+# target_os = "ios" to the kqueue gate and target_os = "android" to the
+# epoll gate. See library/runtime-topology.md for the rationale and
+# upstream PR plan. Mirrors the entry in shared/rust-bridge/Cargo.toml so
+# pi-server-runner (which lives in this workspace) resolves the same
+# patched copy as pi-mobile-client.
+[patch.crates-io]
+asupersync = { path = "shared/third_party/asupersync" }

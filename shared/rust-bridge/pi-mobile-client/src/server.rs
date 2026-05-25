@@ -272,7 +272,11 @@ pub fn start_in_process(args: InProcessStartArgs) -> PiInProcessHandle {
             // provider, including AnthropicProvider over the BYOK proxy)
             // drives network sockets through asupersync's reactor, and
             // without one the agent loop hangs forever the moment it
-            // issues its first request.
+            // issues its first request. The reactor backend selected by
+            // `create_reactor()` is target-specific — see
+            // library/runtime-topology.md for the platform reactor matrix
+            // and the rationale for the vendored asupersync iOS/Android
+            // cfg patches that make this call resolve on those targets.
             let reactor = match asupersync::runtime::reactor::create_reactor() {
                 Ok(r) => r,
                 Err(err) => {
