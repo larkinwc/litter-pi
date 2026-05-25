@@ -21,6 +21,9 @@ import androidx.compose.ui.unit.dp
 import com.litter.android.state.AnthropicOAuthBridge
 import com.litter.android.state.AnthropicOAuthCallback
 import com.litter.android.state.AnthropicOAuthCallbackBus
+import uniffi.codex_mobile_client.AnthropicOAuthConfig
+import uniffi.codex_mobile_client.piAnthropicOauthBegin
+import uniffi.codex_mobile_client.piAnthropicOauthComplete
 
 /**
  * Anthropic OAuth (Claude Code) sign-in surface for the Pi runtime
@@ -50,23 +53,34 @@ import com.litter.android.state.AnthropicOAuthCallbackBus
  */
 @Composable
 fun AnthropicOAuthScreen(
-    authorizeUrl: String = "https://console.anthropic.com/oauth/authorize",
+    authorizeUrl: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     var lastCallback by remember { mutableStateOf<AnthropicOAuthCallback?>(null) }
+    var resolvedAuthorizeUrl by remember { mutableStateOf(authorizeUrl) }
+    var driverError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         AnthropicOAuthCallbackBus.events.collect { callback ->
             lastCallback = callback
             if (callback is AnthropicOAuthCallback.Success) {
-                // The Rust driver owns the code+verifier exchange and
-                // returns the refresh token. Until that UniFFI surface
-                // lands the bridge call below remains the single
-                // platform-side path that touches the
-                // EncryptedSharedPreferences-backed credential, so the
+                // The canonical token exchange lives in Rust; forward
+                // the redirect code to the regenerated UniFFI surface
+                // and persist the result through the
+                // EncryptedSharedPreferences-backed bridge so the
                 // VAL-AUTH-005 grep contract still resolves through
                 // `AnthropicOAuthBridge.persistRefreshToken`.
+                runCatching {
+                    piAnthropicOauthComplete(
+                        config = AnthropicOAuthConfig(
+                            clientId = null,
+                            clientSecret = null,
+                            authPath = null,
+                        ),
+                        code = callback.code,
+                    )
+                }.onFailure { driverError = it.message }
             }
         }
     }
@@ -84,10 +98,31 @@ fun AnthropicOAuthScreen(
             modifier = Modifier.padding(top = 8.dp, bottom = 24.dp),
         )
         Button(onClick = {
+            // Ask the Rust driver for the authorize URL on demand so
+            // the PKCE verifier is stashed inside the shared crate.
+            val url = resolvedAuthorizeUrl ?: runCatching {
+                piAnthropicOauthBegin(
+                    config = AnthropicOAuthConfig(
+                        clientId = null,
+                        clientSecret = null,
+                        authPath = null,
+                    ),
+                )
+            }.getOrElse {
+                driverError = it.message
+                return@Button
+            }
+            resolvedAuthorizeUrl = url
             val customTabs = CustomTabsIntent.Builder().build()
-            customTabs.launchUrl(context, Uri.parse(authorizeUrl))
+            customTabs.launchUrl(context, Uri.parse(url))
         }) {
             Text("Continue with Anthropic")
+        }
+        driverError?.let { reason ->
+            Text(
+                text = "Sign-in failed: $reason",
+                modifier = Modifier.padding(top = 16.dp),
+            )
         }
         when (val callback = lastCallback) {
             is AnthropicOAuthCallback.Success -> Text(

@@ -314,47 +314,51 @@ protocol AnthropicOAuthWebAuthSessionFactory {
 
 /// Default implementation of the authorize step.
 ///
-/// The Rust driver's `begin` lives in `pi_mobile_client::auth::
-/// anthropic_oauth::AnthropicOAuthDriver` and will be exposed via
-/// UniFFI in a follow-up feature (the broader VAL-AUTH-002 scope only
-/// pins the iOS surface). Until then this default implementation
-/// returns the well-known Anthropic authorize URL plus a PKCE pair
-/// generated locally, so the sheet can be presented end-to-end during
-/// development. The XCTest covering this file uses a stub provider so
-/// no network is required.
+/// Delegates to the shared Rust driver via the UniFFI free function
+/// `piAnthropicOauthBegin` (generated from
+/// `codex_mobile_client::auth_uniffi`). The Rust side owns PKCE
+/// verifier generation and stashes it in a process-global slot so the
+/// matching `piAnthropicOauthComplete` call can pick it back up; the
+/// Swift handshake therefore carries an empty `verifier` string — it
+/// is unused by `DefaultAnthropicOAuthCompleter` because the verifier
+/// never crosses the FFI boundary.
 struct DefaultAnthropicOAuthAuthorizeProvider: AnthropicOAuthAuthorizeProvider {
     func beginAuthorization() async throws -> AnthropicOAuthHandshake {
-        let verifier = UUID().uuidString + UUID().uuidString
-        // The production redirect URI is registered with Anthropic as
-        // the deep-link `litter://oauth/pi/anthropic`. The PKCE
-        // `code_challenge` field is intentionally elided here — the
-        // Rust driver supplies the real challenge once the UniFFI
-        // surface is wired up — but the URL shape matches what
-        // Anthropic's consent screen accepts so the
-        // `ASWebAuthenticationSession` opens correctly.
-        var components = URLComponents(string: "https://console.anthropic.com/oauth/authorize")!
-        components.queryItems = [
-            URLQueryItem(name: "response_type", value: "code"),
-            URLQueryItem(name: "redirect_uri", value: AnthropicOAuthBridge.redirectURI),
-            URLQueryItem(name: "scope", value: "user:inference"),
-            URLQueryItem(name: "code_challenge_method", value: "S256")
-        ]
-        guard let url = components.url else {
+        let config = AnthropicOAuthConfig(
+            clientId: nil,
+            clientSecret: nil,
+            authPath: nil
+        )
+        let urlString = try piAnthropicOauthBegin(config: config)
+        guard let url = URL(string: urlString) else {
             throw AnthropicOAuthError.invalidCallbackURL
         }
-        return AnthropicOAuthHandshake(authorizeURL: url, verifier: verifier)
+        // Rust owns the PKCE verifier; surface an empty string so the
+        // existing model code keeps the same shape without leaking the
+        // secret across the FFI boundary.
+        return AnthropicOAuthHandshake(authorizeURL: url, verifier: "")
     }
 }
 
+/// Default token-exchange step. Forwards the redirect `code` to
+/// `piAnthropicOauthComplete`, which reuses the in-process PKCE
+/// verifier captured by `piAnthropicOauthBegin` and persists the
+/// resulting credential into pi's `auth.json` via `AuthStorage`. The
+/// returned `AnthropicOAuthCompletion.refreshToken` is `nil` because
+/// the UniFFI `AuthState` enum intentionally does not surface raw
+/// tokens; the Keychain mirror remains best-effort here and the
+/// canonical refresh token lives in `auth.json`.
 struct DefaultAnthropicOAuthCompleter: AnthropicOAuthCompleter {
     func complete(code: String, verifier: String) async throws -> AnthropicOAuthCompletion {
-        // The token-exchange step is owned by the Rust driver via
-        // `complete_anthropic_oauth_paste`. The UniFFI surface that
-        // exposes that call to Swift lands in a follow-up feature; the
-        // default Swift implementation here only echoes the inputs so
-        // we don't accidentally ship a Swift-side token exchanger that
-        // duplicates the canonical Rust path.
-        _ = (code, verifier)
+        // The Rust driver pulls the verifier from its in-process slot,
+        // so Swift does not need to forward it.
+        _ = verifier
+        let config = AnthropicOAuthConfig(
+            clientId: nil,
+            clientSecret: nil,
+            authPath: nil
+        )
+        _ = try piAnthropicOauthComplete(config: config, code: code)
         return AnthropicOAuthCompletion(refreshToken: nil)
     }
 }
