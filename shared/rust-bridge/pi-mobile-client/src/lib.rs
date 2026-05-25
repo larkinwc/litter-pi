@@ -6,7 +6,11 @@
 //! else (the asupersync↔tokio bridge internals, the auth/tools/approvals
 //! modules, the config builder) is implementation detail.
 
-#![forbid(unsafe_code)]
+// `deny(unsafe_code)` rather than `forbid` so a single marker symbol in
+// `tools/proot.rs` (used to keep `ProotToolFactory` discoverable in the
+// Android stripped .so) can opt in via `#[allow(unsafe_code)]`. No other
+// site in `pi-mobile-client` is allowed to use `unsafe`.
+#![deny(unsafe_code)]
 
 // Implementation modules — kept `pub(crate)` (or private) so the crate
 // presents the narrow API described in `architecture.md`.

@@ -195,4 +195,66 @@ mod tests {
 
         assert_eq!(cfg.cacert_pem_path, cacert);
     }
+
+    #[test]
+    fn android_global_dir_under_files_dir() {
+        let files_dir = PathBuf::from("/data/user/0/com.sigkitten.litter.android/files");
+        let cacert = files_dir.join("cacert.pem");
+
+        let cfg = build_sandbox_config(SandboxInputs {
+            platform: MobilePlatform::Android,
+            home_dir: files_dir.clone(),
+            cacert_pem_path: cacert,
+        });
+
+        assert_eq!(
+            cfg.global_dir,
+            files_dir.join("pi/"),
+            "Android global_dir must point at <filesDir>/pi/"
+        );
+        assert_eq!(
+            cfg.working_dir,
+            files_dir.join("home/pi/"),
+            "Android working_dir must point at <filesDir>/home/pi/"
+        );
+
+        // Both resolved paths must start with the injected filesDir prefix.
+        assert!(
+            cfg.global_dir.starts_with(&files_dir),
+            "global_dir must start with injected filesDir"
+        );
+        assert!(
+            cfg.working_dir.starts_with(&files_dir),
+            "working_dir must start with injected filesDir"
+        );
+    }
+
+    #[test]
+    fn android_ssl_cert_file_set() {
+        let files_dir = PathBuf::from("/data/user/0/com.sigkitten.litter.android/files");
+        let cacert = PathBuf::from("/data/.../assets/cacert.pem");
+
+        let cfg = build_sandbox_config(SandboxInputs {
+            platform: MobilePlatform::Android,
+            home_dir: files_dir,
+            cacert_pem_path: cacert.clone(),
+        });
+
+        let ssl = cfg
+            .env
+            .get("SSL_CERT_FILE")
+            .expect("SSL_CERT_FILE exported on Android");
+        assert_eq!(
+            ssl,
+            &cacert.to_string_lossy().into_owned(),
+            "SSL_CERT_FILE must point at caller-provided cacert.pem"
+        );
+        assert_eq!(cfg.cacert_pem_path, cacert);
+
+        let pi_dir = cfg
+            .env
+            .get("PI_CODING_AGENT_DIR")
+            .expect("PI_CODING_AGENT_DIR exported on Android");
+        assert_eq!(pi_dir, &cfg.global_dir.to_string_lossy().into_owned());
+    }
 }
