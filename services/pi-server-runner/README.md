@@ -20,6 +20,13 @@ CLI:
   `openai`). Defaults to a heuristic based on the env keys present.
 * `--model <id>` — override the default model.
 * `--timeout-secs <n>` — wall-clock budget for the turn (default `180`).
+* `--tool-factory <kind>` — built-in tool factory to mount on the
+  in-process runtime. Today the only accepted value is `pty-dev`
+  (default), which threads the macOS host-shell factory through the
+  same `start_in_process` path used by the iOS iSH and Android proot
+  factories. The runner logs `pi-server-runner: tool_factory=<kind>`
+  to stderr at startup so validators can confirm the right factory
+  was wired in.
 
 ## BYOK environment variables
 

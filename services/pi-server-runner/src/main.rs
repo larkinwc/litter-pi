@@ -47,11 +47,41 @@ use std::io::Read as _;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use pi_mobile_client::{
     Command, InProcessStartArgs, PiEvent, PiSessionConfig, ToolFactoryKind, start_in_process,
 };
 use serde::Serialize;
+
+/// Which built-in tool factory the runner should mount.
+///
+/// `pty-dev` is the macOS host stand-in for iSH (iOS) and proot
+/// (Android). It runs pi's stock `BashTool` directly against the
+/// host shell so the in-process agent loop can be smoke-tested on
+/// a developer machine without booting a simulator or emulator.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+#[clap(rename_all = "kebab-case")]
+enum ToolFactoryArg {
+    /// macOS host shell stand-in. Default. Used as the smoke double
+    /// for both the iOS iSH factory and the Android proot factory.
+    PtyDev,
+}
+
+impl ToolFactoryArg {
+    /// Human-readable label printed at startup so validators can
+    /// confirm which factory was selected.
+    fn display_name(self) -> &'static str {
+        match self {
+            ToolFactoryArg::PtyDev => "pty-dev",
+        }
+    }
+
+    fn to_kind(self) -> ToolFactoryKind {
+        match self {
+            ToolFactoryArg::PtyDev => ToolFactoryKind::PtyDev,
+        }
+    }
+}
 
 /// Runner CLI surface.
 #[derive(Parser, Debug)]
@@ -86,6 +116,16 @@ struct Cli {
     /// Defaults to 180s.
     #[arg(long, default_value_t = 180)]
     timeout_secs: u64,
+
+    /// Which built-in tool factory to mount on the in-process pi
+    /// runtime. Defaults to `pty-dev` (macOS host shell). Picking
+    /// `pty-dev` explicitly mirrors the Android proot/iOS iSH
+    /// wiring path: the factory is threaded through the same
+    /// `start_in_process` code that the platform builds use, which
+    /// lets host-side validators exercise the BashTool plumbing
+    /// without booting a simulator or emulator.
+    #[arg(long, value_enum, default_value_t = ToolFactoryArg::PtyDev)]
+    tool_factory: ToolFactoryArg,
 }
 
 /// Wire shape of a single JSONL transcript line.
@@ -183,6 +223,18 @@ fn main() -> ExitCode {
         }
     };
 
+    // Surface the selected factory on stderr so validators (and
+    // downstream tooling like tuistory) can confirm the right
+    // factory was wired into the in-process runtime. The label is
+    // intentionally stable; tests pin against it.
+    let factory_label = cli.tool_factory.display_name();
+    eprintln!("pi-server-runner: tool_factory={factory_label}");
+    tracing::info!(
+        target: "pi_server_runner",
+        tool_factory = factory_label,
+        "selected tool factory for in-process pi runtime"
+    );
+
     let session_config = PiSessionConfig {
         provider,
         model,
@@ -192,7 +244,7 @@ fn main() -> ExitCode {
         append_system_prompt: None,
         max_tool_iterations: None,
         enabled_tools: None,
-        tool_factory: Some(ToolFactoryKind::PtyDev),
+        tool_factory: Some(cli.tool_factory.to_kind()),
     };
 
     let rt = match tokio::runtime::Builder::new_multi_thread()
@@ -590,6 +642,52 @@ mod tests {
         assert!(
             model.is_none(),
             "non-anthropic providers must keep pi's stock default model"
+        );
+    }
+
+    #[test]
+    fn tool_factory_default_and_kind_round_trip() {
+        // Default value parsed by clap when the user omits --tool-factory.
+        let cli = Cli::try_parse_from(["pi-server-runner", "--local", "--prompt", "p"])
+            .expect("parse without flag");
+        assert_eq!(cli.tool_factory, ToolFactoryArg::PtyDev);
+        assert_eq!(cli.tool_factory.display_name(), "pty-dev");
+        // The kind we hand to PiSessionConfig must be PtyDev.
+        match cli.tool_factory.to_kind() {
+            ToolFactoryKind::PtyDev => {}
+            other => panic!("unexpected tool factory kind: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_factory_explicit_pty_dev_parses() {
+        let cli = Cli::try_parse_from([
+            "pi-server-runner",
+            "--local",
+            "--tool-factory",
+            "pty-dev",
+            "--prompt",
+            "p",
+        ])
+        .expect("parse with --tool-factory pty-dev");
+        assert_eq!(cli.tool_factory, ToolFactoryArg::PtyDev);
+    }
+
+    #[test]
+    fn tool_factory_rejects_unknown_value() {
+        let err = Cli::try_parse_from([
+            "pi-server-runner",
+            "--local",
+            "--tool-factory",
+            "nope",
+            "--prompt",
+            "p",
+        ])
+        .expect_err("unknown factory must error");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("pty-dev"),
+            "clap error should advertise the supported factory value, got: {rendered}"
         );
     }
 
