@@ -12,6 +12,8 @@
 - `shared/rust-bridge/codex-bridge/` is legacy C-FFI support that should not be used for new mobile runtime features.
 - `apps/ios/Sources/Litter/Bridge/Rust*.swift` — iOS bridge files mapping Swift to the shared Rust layer.
 - `apps/android/core/bridge/.../Rust*.kt` — Android bridge files mapping Kotlin to the shared Rust layer. UniFFI Kotlin sources are generated into `shared/rust-bridge/generated/kotlin/` and consumed directly from there; do not maintain copied binding files under Android source roots.
+- `shared/rust-bridge/pi-server-runner/` is the headless macOS host runner binary that exercises the in-process / SSH pi coding-agent runtime end-to-end without booting iOS. It lives in the `shared/rust-bridge/` workspace so it inherits the same workspace dependency resolution as `codex-mobile-client` and `pi-mobile-client`.
+- `shared/rust-bridge/pi-server-runner/` is the headless macOS host runner binary that exercises the in-process / SSH pi coding-agent runtime end-to-end without booting iOS. It lives in the `shared/rust-bridge/` workspace so it inherits the same workspace dependency resolution as `codex-mobile-client` and `pi-mobile-client`.
 - `shared/third_party/codex/` is the upstream Codex submodule.
 - `apps/ios/GeneratedRust/` contains local generated Rust artifacts for iOS builds: UniFFI headers/modulemap plus raw device/simulator staticlibs. These artifacts are not committed.
 - `apps/ios/Frameworks/` contains downloaded/package-lane iOS XCFrameworks (`codex_mobile_client.xcframework` in package builds and `litter_ish.xcframework`). These artifacts are not committed.

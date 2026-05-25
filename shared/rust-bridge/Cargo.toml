@@ -8,6 +8,7 @@ members = [
     "uniffi-bindgen",
     "codex-tui",
     "pi-mobile-client",
+    "pi-server-runner",
 ]
 resolver = "3"
 

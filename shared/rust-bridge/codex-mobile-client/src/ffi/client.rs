@@ -3224,7 +3224,7 @@ Widget construction guidelines (for reference when making UI decisions):\n\n\
 /// [`AppClient::connect_local_pi_byok`] when forwarding a BYOK profile
 /// into the in-process pi runtime. Capturing them as a struct keeps the
 /// provider-precedence policy a pure function of inputs, mirroring the
-/// `ProviderEnv` shape used by `services/pi-server-runner` (commit
+/// `ProviderEnv` shape used by `shared/rust-bridge/pi-server-runner` (commit
 /// 5327c09).
 #[derive(Debug, Default, Clone)]
 struct ProviderBaseUrlEnv {
@@ -3833,7 +3833,7 @@ mod tests {
     }
 
     /// Mirrors the `ProviderEnv` tests in
-    /// `services/pi-server-runner/src/main.rs` (commit 5327c09): the
+    /// `shared/rust-bridge/pi-server-runner/src/main.rs` (commit 5327c09): the
     /// active provider's `*_BASE_URL` env var must reach the in-process
     /// pi runtime, with the Swift-supplied explicit `base_url` argument
     /// taking precedence when present.

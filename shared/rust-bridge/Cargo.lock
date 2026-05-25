@@ -11370,6 +11370,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "pi-server-runner"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "codex-mobile-client",
+ "pi-mobile-client",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "pi_agent_rust"
 version = "0.1.16"
 dependencies = [
