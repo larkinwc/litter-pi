@@ -86,6 +86,7 @@ pub async fn pi_byok_set(
 
     AuthEvent::Authorized {
         source: AuthEventSource::Byok,
+        refresh_token: None,
     }
 }
 
@@ -144,7 +145,8 @@ mod tests {
         assert_eq!(
             event,
             AuthEvent::Authorized {
-                source: AuthEventSource::Byok
+                source: AuthEventSource::Byok,
+                refresh_token: None,
             }
         );
 

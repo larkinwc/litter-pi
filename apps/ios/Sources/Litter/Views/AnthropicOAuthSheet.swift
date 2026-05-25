@@ -344,10 +344,11 @@ struct DefaultAnthropicOAuthAuthorizeProvider: AnthropicOAuthAuthorizeProvider {
 /// `piAnthropicOauthComplete`, which reuses the in-process PKCE
 /// verifier captured by `piAnthropicOauthBegin` and persists the
 /// resulting credential into pi's `auth.json` via `AuthStorage`. The
-/// returned `AnthropicOAuthCompletion.refreshToken` is `nil` because
-/// the UniFFI `AuthState` enum intentionally does not surface raw
-/// tokens; the Keychain mirror remains best-effort here and the
-/// canonical refresh token lives in `auth.json`.
+/// Rust driver surfaces the raw OAuth refresh token only on the
+/// `Authorized{source: .oauth}` variant of `AuthState`; we pull it
+/// off here so the platform Keychain mirror at the call site can
+/// persist it. BYOK / non-OAuth completions surface `nil` so the
+/// keychain write is skipped for API-key credentials.
 struct DefaultAnthropicOAuthCompleter: AnthropicOAuthCompleter {
     func complete(code: String, verifier: String) async throws -> AnthropicOAuthCompletion {
         // The Rust driver pulls the verifier from its in-process slot,
@@ -358,8 +359,22 @@ struct DefaultAnthropicOAuthCompleter: AnthropicOAuthCompleter {
             clientSecret: nil,
             authPath: nil
         )
-        _ = try piAnthropicOauthComplete(config: config, code: code)
-        return AnthropicOAuthCompletion(refreshToken: nil)
+        let state = try piAnthropicOauthComplete(config: config, code: code)
+        switch state {
+        case let .authorized(source, refreshToken):
+            // Mirror the refresh token only for the OAuth source.
+            // BYOK credentials never carry a refresh token across the
+            // FFI boundary (the Rust driver pins `refresh_token = nil`
+            // on the `.byok` arm).
+            guard case .oauth = source else {
+                return AnthropicOAuthCompletion(refreshToken: nil)
+            }
+            return AnthropicOAuthCompletion(refreshToken: refreshToken)
+        case .unauthenticated, .authorizing:
+            return AnthropicOAuthCompletion(refreshToken: nil)
+        case let .failed(reason):
+            throw AnthropicOAuthError.providerError(reason)
+        }
     }
 }
 

@@ -21,9 +21,10 @@ import androidx.compose.ui.unit.dp
 import com.litter.android.state.AnthropicOAuthBridge
 import com.litter.android.state.AnthropicOAuthCallback
 import com.litter.android.state.AnthropicOAuthCallbackBus
+import com.litter.android.state.DefaultAnthropicOAuthCompleter
+import com.litter.android.state.AnthropicOAuthCompleter
 import uniffi.codex_mobile_client.AnthropicOAuthConfig
 import uniffi.codex_mobile_client.piAnthropicOauthBegin
-import uniffi.codex_mobile_client.piAnthropicOauthComplete
 
 /**
  * Anthropic OAuth (Claude Code) sign-in surface for the Pi runtime
@@ -54,6 +55,7 @@ import uniffi.codex_mobile_client.piAnthropicOauthComplete
 @Composable
 fun AnthropicOAuthScreen(
     authorizeUrl: String? = null,
+    completer: AnthropicOAuthCompleter = DefaultAnthropicOAuthCompleter,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -66,20 +68,18 @@ fun AnthropicOAuthScreen(
             lastCallback = callback
             if (callback is AnthropicOAuthCallback.Success) {
                 // The canonical token exchange lives in Rust; forward
-                // the redirect code to the regenerated UniFFI surface
-                // and persist the result through the
-                // EncryptedSharedPreferences-backed bridge so the
-                // VAL-AUTH-005 grep contract still resolves through
+                // the redirect code to the completer (which calls the
+                // UniFFI `piAnthropicOauthComplete` surface) and
+                // persist any refresh token the Rust driver surfaced
+                // through the EncryptedSharedPreferences-backed
+                // bridge so the VAL-AUTH-005 grep contract still
+                // resolves through
                 // `AnthropicOAuthBridge.persistRefreshToken`.
                 runCatching {
-                    piAnthropicOauthComplete(
-                        config = AnthropicOAuthConfig(
-                            clientId = null,
-                            clientSecret = null,
-                            authPath = null,
-                        ),
-                        code = callback.code,
-                    )
+                    val refreshToken = completer.complete(callback.code)
+                    if (refreshToken != null) {
+                        AnthropicOAuthBridge.persistRefreshToken(context, refreshToken)
+                    }
                 }.onFailure { driverError = it.message }
             }
         }

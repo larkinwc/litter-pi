@@ -57,7 +57,14 @@ pub enum AuthEventSource {
 
 /// Typed driver events. The `codex-mobile-client` store reducer maps
 /// these to the UniFFI `AuthState` enum.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The `refresh_token` field on `Authorized` carries the raw OAuth
+/// refresh token when the credential was minted via PKCE. Platform
+/// completers mirror it into the iOS Keychain / Android
+/// EncryptedSharedPreferences so a future sandbox wipe still preserves
+/// the long-lived credential. The Debug impl below redacts it; never
+/// add `#[derive(Debug)]` back without preserving that redaction.
+#[derive(Clone, PartialEq, Eq)]
 pub enum AuthEvent {
     /// No credential present.
     Unauthenticated,
@@ -65,10 +72,42 @@ pub enum AuthEvent {
     /// the user to paste the redirect code).
     Authorizing,
     /// A live credential is present.
-    Authorized { source: AuthEventSource },
+    Authorized {
+        source: AuthEventSource,
+        /// Raw OAuth refresh token, `Some` only when `source == Oauth`
+        /// and we just minted (or imported) a credential. Snapshots
+        /// from disk intentionally surface `None` so the token never
+        /// leaves the pi `auth.json` boundary unless the platform
+        /// completer explicitly asks for it on the same call that
+        /// produced it.
+        refresh_token: Option<String>,
+    },
     /// The driver could not produce a live credential. `reason` is a
     /// human-readable, redacted explanation (no tokens, no secrets).
     Failed { reason: String },
+}
+
+impl std::fmt::Debug for AuthEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthEvent::Unauthenticated => f.write_str("Unauthenticated"),
+            AuthEvent::Authorizing => f.write_str("Authorizing"),
+            AuthEvent::Authorized {
+                source,
+                refresh_token,
+            } => f
+                .debug_struct("Authorized")
+                .field("source", source)
+                .field(
+                    "refresh_token",
+                    &refresh_token.as_ref().map(|_| "<redacted>"),
+                )
+                .finish(),
+            AuthEvent::Failed { reason } => {
+                f.debug_struct("Failed").field("reason", reason).finish()
+            }
+        }
+    }
 }
 
 /// Inputs the platform layer hands the driver. All values are optional
@@ -172,9 +211,19 @@ impl AnthropicOAuthDriver {
             }
         };
 
+        // Capture the refresh token before we hand the credential to
+        // `persist` (which moves it). The token is surfaced to the
+        // platform completer only on this in-process call so it can be
+        // mirrored into the iOS Keychain / Android EncryptedSharedPrefs.
+        let refresh_token = match &credential {
+            AuthCredential::OAuth { refresh_token, .. } => Some(refresh_token.clone()),
+            _ => None,
+        };
+
         match self.persist(credential).await {
             Ok(()) => AuthEvent::Authorized {
                 source: AuthEventSource::Oauth,
+                refresh_token,
             },
             Err(err) => AuthEvent::Failed {
                 reason: format!("persist: {}", redact(&err.to_string())),
@@ -206,15 +255,17 @@ impl AnthropicOAuthDriver {
             .refresh_expired_oauth_tokens_with_client(&self.http)
             .await
         {
-            Ok(()) => {
-                if storage.get(ANTHROPIC_PROVIDER_ID).is_some() {
-                    AuthEvent::Authorized {
-                        source: AuthEventSource::Oauth,
-                    }
-                } else {
-                    AuthEvent::Unauthenticated
-                }
-            }
+            Ok(()) => match storage.get(ANTHROPIC_PROVIDER_ID) {
+                Some(AuthCredential::OAuth { refresh_token, .. }) => AuthEvent::Authorized {
+                    source: AuthEventSource::Oauth,
+                    refresh_token: Some(refresh_token.clone()),
+                },
+                Some(_) => AuthEvent::Authorized {
+                    source: AuthEventSource::Oauth,
+                    refresh_token: None,
+                },
+                None => AuthEvent::Unauthenticated,
+            },
             Err(err) => self.invalidate_after_refresh_failure(&mut storage, err).await,
         }
     }
@@ -226,12 +277,19 @@ impl AnthropicOAuthDriver {
     pub async fn snapshot(&self) -> AuthEvent {
         match self.load_storage().await {
             Ok(storage) => match storage.get(ANTHROPIC_PROVIDER_ID) {
+                // Snapshots intentionally do NOT surface the refresh
+                // token. Platform mirrors are populated on the same
+                // call that minted the credential (PKCE complete,
+                // Claude import). A snapshot read should not exfiltrate
+                // an already-persisted token across the FFI boundary.
                 Some(AuthCredential::OAuth { .. }) => AuthEvent::Authorized {
                     source: AuthEventSource::Oauth,
+                    refresh_token: None,
                 },
                 Some(AuthCredential::ApiKey { .. }) | Some(AuthCredential::BearerToken { .. }) => {
                     AuthEvent::Authorized {
                         source: AuthEventSource::Byok,
+                        refresh_token: None,
                     }
                 }
                 _ => AuthEvent::Unauthenticated,
@@ -508,6 +566,7 @@ mod tests {
             event,
             AuthEvent::Authorized {
                 source: AuthEventSource::Oauth,
+                refresh_token: Some(NEW_REFRESH_TOKEN.to_string()),
             },
             "happy-path refresh must surface AuthEvent::Authorized {{ source: Oauth }}"
         );

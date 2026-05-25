@@ -266,7 +266,7 @@ fn auth_state_line(event: &AuthEvent) -> TranscriptLine {
             source: None,
             reason: None,
         },
-        AuthEvent::Authorized { source } => TranscriptLine::AuthState {
+        AuthEvent::Authorized { source, .. } => TranscriptLine::AuthState {
             state: "authorized",
             source: Some(auth_source_label(*source)),
             reason: None,
@@ -1227,6 +1227,7 @@ mod tests {
 
         match auth_state_line(&AuthEvent::Authorized {
             source: AuthEventSource::Oauth,
+            refresh_token: None,
         }) {
             TranscriptLine::AuthState { state, source, .. } => {
                 assert_eq!(state, "authorized");
@@ -1237,6 +1238,7 @@ mod tests {
 
         match auth_state_line(&AuthEvent::Authorized {
             source: AuthEventSource::Byok,
+            refresh_token: None,
         }) {
             TranscriptLine::AuthState { state, source, .. } => {
                 assert_eq!(state, "authorized");
@@ -1293,6 +1295,7 @@ mod tests {
         match snap {
             AuthEvent::Authorized {
                 source: AuthEventSource::Byok,
+                ..
             } => {}
             other => panic!("expected Authorized {{ Byok }}, got {other:?}"),
         }
@@ -1405,6 +1408,7 @@ mod tests {
         match snap {
             AuthEvent::Authorized {
                 source: AuthEventSource::Oauth,
+                ..
             } => {}
             other => panic!("expected Authorized {{ Oauth }}, got {other:?}"),
         }

@@ -11363,6 +11363,7 @@ dependencies = [
  "futures",
  "pi_agent_rust",
  "serde_json",
+ "serial_test",
  "tempfile",
  "tokio",
  "tracing",

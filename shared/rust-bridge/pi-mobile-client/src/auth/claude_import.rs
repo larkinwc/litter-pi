@@ -200,6 +200,7 @@ pub fn import_claude_credentials(
     ClaudeImportOutcome {
         event: AuthEvent::Authorized {
             source: AuthEventSource::Oauth,
+            refresh_token: Some(parsed.refresh_token.clone()),
         },
         summary: Some(ClaudeImportSummary {
             provider: ANTHROPIC_PROVIDER_ID.to_string(),
@@ -455,12 +456,16 @@ mod tests {
             &json,
         );
 
-        assert_eq!(
-            outcome.event,
+        match &outcome.event {
             AuthEvent::Authorized {
-                source: AuthEventSource::Oauth
-            }
-        );
+                source: AuthEventSource::Oauth,
+                refresh_token,
+            } => assert!(
+                refresh_token.is_some(),
+                "claude import must surface the imported refresh token"
+            ),
+            other => panic!("expected Authorized{{Oauth}}, got {other:?}"),
+        }
         let summary = outcome.summary.expect("summary present on success");
         assert_eq!(summary.provider, "anthropic");
         assert_eq!(summary.email.as_deref(), Some("tester@example.com"));
@@ -511,7 +516,8 @@ mod tests {
         assert!(matches!(
             outcome.event,
             AuthEvent::Authorized {
-                source: AuthEventSource::Oauth
+                source: AuthEventSource::Oauth,
+                ..
             }
         ));
 

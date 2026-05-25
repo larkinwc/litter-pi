@@ -132,6 +132,40 @@ final class AnthropicOAuthSheetTests: XCTestCase {
         }
     }
 
+    func testBeginAuthorizationSkipsKeychainWhenCompleterReturnsNilRefresh() async {
+        // Simulates the BYOK / non-Oauth arm: the Rust driver
+        // surfaces `Authorized{source: .byok}` with `refresh_token =
+        // nil`, so `DefaultAnthropicOAuthCompleter` maps it to a
+        // `nil` `AnthropicOAuthCompletion.refreshToken`. The model
+        // must not call the Keychain persister in that case.
+        let stubAuthorize = StubAuthorizeProvider(
+            handshake: AnthropicOAuthHandshake(
+                authorizeURL: URL(string: "https://console.anthropic.com/oauth/authorize?byok")!,
+                verifier: "verifier-token"
+            )
+        )
+        let stubWebAuth = StubWebAuthSessionFactory(
+            callbackURL: URL(string: "litter://oauth/pi/anthropic?code=byok-code")!
+        )
+        let stubCompleter = StubCompleter(
+            completion: AnthropicOAuthCompletion(refreshToken: nil)
+        )
+        let model = AnthropicOAuthSheetModel(
+            authorizeProvider: stubAuthorize,
+            webAuthSessionFactory: stubWebAuth,
+            completer: stubCompleter,
+            keychainPersister: { _ in
+                XCTFail("Keychain persister must not run on BYOK/refreshToken=nil path")
+            }
+        )
+        let result = await model.beginAuthorization()
+        guard case let .signedIn(refreshTokenStored) = result else {
+            XCTFail("Expected signedIn, got \(result)")
+            return
+        }
+        XCTAssertFalse(refreshTokenStored)
+    }
+
     func testKeychainWrapperUsesPiOauthService() {
         // Smoke-test the wrapper's plumbing without touching the
         // system Keychain: instantiating it with a custom service is
