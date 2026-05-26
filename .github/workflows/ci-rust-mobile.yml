@@ -37,6 +37,11 @@ jobs:
       CARGO_TERM_COLOR: always
 
     steps:
+      - name: Lint workflow with actionlint
+        uses: raven-actions/actionlint@v2
+        with:
+          files: .github/workflows/ci-rust-mobile.yml
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -46,12 +51,8 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          components: clippy
           targets: aarch64-apple-ios-sim
-
-      - name: Lint workflow with actionlint
-        uses: raven-actions/actionlint@v2
-        with:
-          files: .github/workflows/ci-rust-mobile.yml
 
       - name: Sync codex submodule
         run: ./apps/ios/scripts/sync-codex.sh --preserve-current
@@ -62,5 +63,8 @@ jobs:
       - name: Cargo test (shared Rust mobile crates)
         run: make rust-test
 
-      - name: Build Rust for iOS simulator (fast lane)
-        run: make rust-ios-sim-fast
+      - name: Clippy (pi crates, deny warnings)
+        run: cargo clippy --manifest-path shared/rust-bridge/Cargo.toml -p pi-mobile-client -p pi-server-runner -- -D warnings
+
+      - name: Build iOS simulator (fast lane)
+        run: make ios-sim-fast
