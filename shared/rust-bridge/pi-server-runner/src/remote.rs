@@ -121,7 +121,8 @@ pub enum RemoteTranscriptLine {
 }
 
 /// Emit a transcript line to stdout and (when set) the
-/// `--events-out` file as JSONL.
+/// `--events-out` file as JSONL. `pub(crate)` so the alleycat-pair
+/// driver can reuse the same transcript shape.
 pub(crate) async fn emit_remote_line(
     file: &mut Option<tokio::fs::File>,
     line: &RemoteTranscriptLine,
@@ -364,7 +365,7 @@ pub async fn drive_remote_ssh(args: RemoteSshArgs) -> ExitCode {
 /// Run one ACP turn: `session/new` then `session/prompt`, draining
 /// streaming notifications from the wire into transcript lines until
 /// the prompt response lands.
-async fn drive_turn(
+pub(crate) async fn drive_turn(
     client: &mut RemoteAppServerClient,
     prompt: &str,
     events_file: &mut Option<tokio::fs::File>,

@@ -59,8 +59,10 @@ use pi_mobile_client::{
 };
 use serde::Serialize;
 
+mod alleycat;
 mod remote;
 
+use alleycat::{AlleycatPairArgs, drive_alleycat_pair};
 use remote::{InjectDropMode, RemoteSshArgs, drive_remote_ssh};
 
 /// Which built-in tool factory the runner should mount.
@@ -228,6 +230,54 @@ struct Cli {
     /// an out-of-band helper script invoked by the validator.
     #[arg(long, value_enum, value_name = "MODE", requires = "remote_ssh")]
     inject_drop: Option<InjectDropMode>,
+
+    /// Drive a turn against the pi entry advertised by an alleycat
+    /// host. The flag value is the literal JSON pair payload (the
+    /// output of `alleycat pair` on the host). The string `env`
+    /// resolves the payload from `$PI_ALLEYCAT_PAIR_PAYLOAD` so the
+    /// CI lane can avoid embedding the token in command lines. The
+    /// runner pairs, lists agents, caches the litter manifest, and
+    /// then drives `--prompt`/`--stdin` against the alleycat-
+    /// discovered pi entry. Mutually exclusive with `--local` /
+    /// `--remote-ssh`.
+    #[arg(
+        long,
+        value_name = "PAYLOAD",
+        conflicts_with_all = ["local", "remote_ssh"],
+    )]
+    alleycat_pair: Option<String>,
+
+    /// Override the on-disk path of the cached alleycat manifest
+    /// JSON. Defaults to `artifacts/val-rem/008-alleycat-manifest.json`
+    /// so the VAL-REM-008/009 evidence lands where the validator
+    /// expects.
+    #[arg(long, value_name = "PATH", requires = "alleycat_pair")]
+    manifest_out: Option<PathBuf>,
+
+    /// Optional one-shot HTTP listener that serves the cached
+    /// manifest body verbatim. Validators `curl` against it to
+    /// confirm VAL-REM-011. The listener dies with the process and
+    /// shuts down after `--serve-manifest-max-hits` requests
+    /// (default 1).
+    #[arg(long, value_name = "ADDR", requires = "alleycat_pair")]
+    serve_manifest: Option<std::net::SocketAddr>,
+
+    /// How many HTTP requests `--serve-manifest` should answer
+    /// before the listener task shuts down. Defaults to 1 so a
+    /// single `curl` validates the endpoint and the listener exits.
+    #[arg(
+        long,
+        value_name = "N",
+        default_value_t = 1,
+        requires = "serve_manifest"
+    )]
+    serve_manifest_max_hits: u32,
+
+    /// Skip the actual alleycat-path turn after caching the manifest.
+    /// Useful when the alleycat-side pi process is unhealthy but the
+    /// manifest evidence (VAL-REM-008/009/011) still needs collecting.
+    #[arg(long, requires = "alleycat_pair")]
+    alleycat_skip_turn: bool,
 }
 
 /// Wire shape of a single JSONL transcript line.
@@ -348,6 +398,42 @@ fn main() -> ExitCode {
         .try_init();
 
     let cli = Cli::parse();
+
+    if let Some(raw) = cli.alleycat_pair.clone() {
+        let payload = resolve_alleycat_payload(&raw);
+        let prompt = if cli.alleycat_skip_turn {
+            cli.prompt.clone().unwrap_or_default()
+        } else {
+            match resolve_prompt(&cli) {
+                Ok(p) => p,
+                Err(err) => {
+                    eprintln!("pi-server-runner: {err}");
+                    return ExitCode::from(2);
+                }
+            }
+        };
+        let alleycat_args = AlleycatPairArgs {
+            payload,
+            prompt,
+            events_out: cli.events_out.clone(),
+            manifest_out: cli.manifest_out.clone(),
+            serve_manifest: cli.serve_manifest,
+            serve_max_hits: cli.serve_manifest_max_hits,
+            skip_turn: cli.alleycat_skip_turn,
+            timeout_secs: cli.timeout_secs,
+        };
+        let rt = match tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt,
+            Err(err) => {
+                eprintln!("pi-server-runner: tokio runtime build failed: {err}");
+                return ExitCode::from(2);
+            }
+        };
+        return rt.block_on(drive_alleycat_pair(alleycat_args));
+    }
 
     if let Some(host) = cli.remote_ssh.clone() {
         let user = cli
@@ -592,6 +678,19 @@ fn main() -> ExitCode {
 
     let timeout = Duration::from_secs(cli.timeout_secs);
     rt.block_on(async move { drive_local(session_config, prompt_text, timeout).await })
+}
+
+/// Translate the `--alleycat-pair` flag value into a JSON payload.
+/// The literal string `env` (or an empty value) resolves the payload
+/// from `$PI_ALLEYCAT_PAIR_PAYLOAD` so CI can keep the token out of
+/// argv. Anything else is passed through verbatim.
+fn resolve_alleycat_payload(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("env") {
+        std::env::var("PI_ALLEYCAT_PAIR_PAYLOAD").unwrap_or_default()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn resolve_prompt(cli: &Cli) -> Result<String, String> {
