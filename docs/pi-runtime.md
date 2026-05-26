@@ -61,6 +61,44 @@ Recognized environment variables:
 | `PI_AGENT_REV` | submodule pin from `HEAD` | Override the commit |
 | `PI_REMOTE_DEST` | `$HOME/.local/bin/pi` | Install destination |
 
+### Credential bootstrap (optional)
+
+If any of the credential env vars below are set, the script also seeds
+`~/.pi/agent/{auth.json,models.json,settings.json}` on the remote so the
+freshly installed `pi` authenticates without any manual post-install editing.
+The writes are atomic (temp file + rename) and hold an exclusive `flock` on
+`~/.pi/agent/auth.json.lock` so an in-flight pi session is not clobbered.
+
+| Variable | Effect |
+| --- | --- |
+| `ANTHROPIC_API_KEY` | Writes `auth.json[anthropic] = {type: "api_key", key: <value>}`. The field name is `key`, **not** `api_key` — that's pi's `AuthCredential::ApiKey` schema (see `shared/third_party/pi_agent_rust/src/auth.rs`). A wrong field name silently falls back to `~/.claude/.credentials.json` and the proxy responds 401. |
+| `ANTHROPIC_BASE_URL` | Seeds `models.json` provider entry for `anthropic` (`api=anthropic-messages`). pi does not honour the `ANTHROPIC_BASE_URL` env var at runtime, so the override must live in `models.json`. |
+| `ANTHROPIC_MODEL` | Model id under the anthropic provider in `models.json` (default `claude-opus-4-7`). |
+| `OPENAI_API_KEY` | Same shape under `auth.json[openai]`. |
+| `OPENAI_BASE_URL` | Seeds `models.json` provider entry for `openai` (`api=openai-completions`). |
+| `OPENAI_MODEL` | Model id under the openai provider in `models.json` (default `gpt-4o`). |
+| `PI_DEFAULT_PROVIDER` | Written to `settings.json`. Auto-defaults to `anthropic` if `ANTHROPIC_API_KEY` is set, else `openai` if `OPENAI_API_KEY` is set. Setting it explicitly prevents pi from falling back to the first available provider in `models.json`. |
+| `PI_DEFAULT_MODEL` | Written to `settings.json`. Auto-defaults to the matching `*_MODEL` for the chosen provider. |
+
+Example (clean install on linus@192.168.1.156 with Anthropic via the
+`cli-proxy.getpitchfork.com` proxy):
+
+```bash
+set -a; . ./.env; set +a   # provides ANTHROPIC_API_KEY + ANTHROPIC_BASE_URL
+PI_REMOTE_SSH_HOST=192.168.1.156 PI_REMOTE_SSH_USER=linus \
+  ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+  ANTHROPIC_BASE_URL="$ANTHROPIC_BASE_URL" \
+  tools/scripts/install-pi-on-remote.sh
+
+ssh linus@192.168.1.156 "pi -p 'reply with ok'"
+# -> ok
+```
+
+Secrets stay out of argv: the script base64-encodes the JSON bundle into the
+remote bash heredoc, decodes it with `python3`, writes per-file temps inside
+`~/.pi/agent/` (so the rename is on the same filesystem), `chmod 600`s them,
+then renames them into place.
+
 Prerequisites on the remote host:
 
 - `git` and `rustup` (or a Rust toolchain) on `$PATH`. The fork pins

@@ -35,8 +35,38 @@
 #                        the first explicit candidate in
 #                        codex-mobile-client::ssh::pi_binary)
 #
+# Credential bootstrap (all optional). When ANY of these are set, the script
+# also seeds `~/.pi/agent/{auth.json,models.json,settings.json}` on the remote
+# so that the freshly installed `pi` can authenticate without any manual
+# post-install editing. Writes are atomic (temp file + rename) and respect
+# pi's `auth.json.lock` so an in-flight pi session is not clobbered.
+#
+#   ANTHROPIC_API_KEY    seeds `auth.json[anthropic] = {type: "api_key", key}`
+#                        using pi's `AuthCredential::ApiKey` schema (field name
+#                        is `key`, NOT `api_key` — the latter falls back to
+#                        ~/.claude/.credentials.json and 401s on proxies).
+#   ANTHROPIC_BASE_URL   seeds `models.json` provider entry for anthropic with
+#                        api=anthropic-messages; pi does not honour the env var
+#                        for base_url at runtime so it must live in models.json.
+#   ANTHROPIC_MODEL      model id to expose under the anthropic provider in
+#                        models.json (default: claude-opus-4-7).
+#   OPENAI_API_KEY       same shape under `openai`.
+#   OPENAI_BASE_URL      seeds openai provider entry (api=openai-completions).
+#   OPENAI_MODEL         model id under openai (default: gpt-4o).
+#   PI_DEFAULT_PROVIDER  written into settings.json (defaults to anthropic if
+#                        ANTHROPIC_API_KEY set, else openai if OPENAI_API_KEY
+#                        set, else unset).
+#   PI_DEFAULT_MODEL     written into settings.json (defaults to the matching
+#                        ANTHROPIC_MODEL / OPENAI_MODEL).
+#
 # Usage:
 #   PI_REMOTE_SSH_HOST=192.168.1.156 PI_REMOTE_SSH_USER=linus \
+#     tools/scripts/install-pi-on-remote.sh
+#
+#   # with credential bootstrap:
+#   PI_REMOTE_SSH_HOST=192.168.1.156 PI_REMOTE_SSH_USER=linus \
+#     ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+#     ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL \
 #     tools/scripts/install-pi-on-remote.sh
 
 set -euo pipefail
@@ -148,6 +178,124 @@ REMOTE_SCRIPT="${REMOTE_SCRIPT//__BRANCH__/${BRANCH}}"
 REMOTE_SCRIPT="${REMOTE_SCRIPT//__REV__/${PI_AGENT_REV}}"
 REMOTE_SCRIPT="${REMOTE_SCRIPT//__DEST__/${DEST}}"
 
+# ---------------------------------------------------------------------------
+# Credential bootstrap (optional; only runs when env vars are supplied).
+#
+# We build the JSON payloads locally and ship them over a single ssh stdin
+# transfer that runs an atomic temp-file + rename install on the remote,
+# guarded by flock on ~/.pi/agent/auth.json.lock so in-flight pi sessions are
+# not clobbered. Secrets never appear in argv.
+# ---------------------------------------------------------------------------
+
+ANTHROPIC_MODEL_DEFAULT="${ANTHROPIC_MODEL:-claude-opus-4-7}"
+OPENAI_MODEL_DEFAULT="${OPENAI_MODEL:-gpt-4o}"
+
+# Derive defaults for settings.json
+default_provider="${PI_DEFAULT_PROVIDER:-}"
+default_model="${PI_DEFAULT_MODEL:-}"
+if [[ -z "${default_provider}" ]]; then
+    if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+        default_provider="anthropic"
+        default_model="${default_model:-${ANTHROPIC_MODEL_DEFAULT}}"
+    elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
+        default_provider="openai"
+        default_model="${default_model:-${OPENAI_MODEL_DEFAULT}}"
+    fi
+fi
+
+# Build JSON files locally via python3 (already a hard dep on the dev host).
+build_credential_payloads() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        err "python3 required locally to build credential JSON payloads"
+        exit 5
+    fi
+
+    python3 - <<'PYEOF'
+import json, os, sys
+
+anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+anthropic_url = os.environ.get("ANTHROPIC_BASE_URL", "")
+anthropic_model = os.environ.get("ANTHROPIC_MODEL_RESOLVED", "")
+openai_key = os.environ.get("OPENAI_API_KEY", "")
+openai_url = os.environ.get("OPENAI_BASE_URL", "")
+openai_model = os.environ.get("OPENAI_MODEL_RESOLVED", "")
+default_provider = os.environ.get("DEFAULT_PROVIDER_RESOLVED", "")
+default_model = os.environ.get("DEFAULT_MODEL_RESOLVED", "")
+
+auth = {}
+if anthropic_key:
+    auth["anthropic"] = {"type": "api_key", "key": anthropic_key}
+if openai_key:
+    auth["openai"] = {"type": "api_key", "key": openai_key}
+
+providers = {}
+if anthropic_url or anthropic_key:
+    entry = {
+        "api": "anthropic-messages",
+        "authHeader": False,
+    }
+    if anthropic_url:
+        entry["baseUrl"] = anthropic_url
+    entry["models"] = [{
+        "id": anthropic_model,
+        "name": anthropic_model,
+        "input": ["text"],
+        "reasoning": True,
+        "contextWindow": 200000,
+        "maxTokens": 8192,
+    }]
+    providers["anthropic"] = entry
+if openai_url or openai_key:
+    entry = {"api": "openai-completions"}
+    if openai_url:
+        entry["baseUrl"] = openai_url
+    entry["models"] = [{
+        "id": openai_model,
+        "name": openai_model,
+        "input": ["text"],
+        "contextWindow": 128000,
+        "maxTokens": 8192,
+    }]
+    providers["openai"] = entry
+
+models = {"providers": providers} if providers else None
+
+settings = {}
+if default_provider:
+    settings["default_provider"] = default_provider
+if default_model:
+    settings["default_model"] = default_model
+
+out = {
+    "auth": auth or None,
+    "models": models,
+    "settings": settings or None,
+}
+# Emit as a single JSON document so the remote can pick apart.
+json.dump(out, sys.stdout)
+PYEOF
+}
+
+if [[ -n "${ANTHROPIC_API_KEY:-}" || -n "${ANTHROPIC_BASE_URL:-}" \
+        || -n "${OPENAI_API_KEY:-}" || -n "${OPENAI_BASE_URL:-}" \
+        || -n "${PI_DEFAULT_PROVIDER:-}" || -n "${PI_DEFAULT_MODEL:-}" ]]; then
+    log "credential bootstrap requested; building ~/.pi/agent/*.json payloads"
+    CRED_BUNDLE=$(
+        ANTHROPIC_MODEL_RESOLVED="${ANTHROPIC_MODEL_DEFAULT}" \
+        OPENAI_MODEL_RESOLVED="${OPENAI_MODEL_DEFAULT}" \
+        DEFAULT_PROVIDER_RESOLVED="${default_provider}" \
+        DEFAULT_MODEL_RESOLVED="${default_model}" \
+        ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
+        ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-}" \
+        OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
+        OPENAI_BASE_URL="${OPENAI_BASE_URL:-}" \
+        build_credential_payloads
+    )
+    SEED_CREDS=1
+else
+    SEED_CREDS=0
+fi
+
 log "running remote bootstrap"
 # shellcheck disable=SC2087 # we *want* local expansion: REMOTE_SCRIPT has
 # already been substituted with concrete values; the remote `bash -s` just
@@ -155,5 +303,98 @@ log "running remote bootstrap"
 ssh "${SSH_OPTS[@]}" "${PI_REMOTE_SSH_USER}@${PI_REMOTE_SSH_HOST}" bash -s <<EOF
 ${REMOTE_SCRIPT}
 EOF
+
+if [[ "${SEED_CREDS}" == "1" ]]; then
+    log "seeding ~/.pi/agent/{auth,models,settings}.json on remote"
+    # Base64-encode the bundle so it survives heredoc transit without quoting
+    # surprises (newlines, quotes, backslashes in JSON). It lands in a local
+    # variable in the remote bash process and never on the remote disk except
+    # as the final file payloads themselves. argv stays clean.
+    if command -v base64 >/dev/null 2>&1; then
+        CRED_BUNDLE_B64=$(printf '%s' "${CRED_BUNDLE}" | base64 | tr -d '\n')
+    else
+        err "base64 required locally to seed credentials"
+        exit 5
+    fi
+
+    REMOTE_CRED_SCRIPT=$(cat <<'CRED_EOF'
+set -euo pipefail
+AGENT_DIR="$HOME/.pi/agent"
+mkdir -p "$AGENT_DIR"
+
+BUNDLE_B64="__BUNDLE_B64__"
+if [[ -z "$BUNDLE_B64" ]]; then
+    echo "remote: empty credential bundle" >&2
+    exit 6
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "remote: python3 required to decode credential bundle" >&2
+    exit 6
+fi
+
+# Use python3 to deconstruct the base64-encoded JSON bundle and emit each
+# component to a per-file temp path. Doing the decode in one python invocation
+# avoids re-passing the bundle as args.
+TMP_AUTH="$(mktemp "$AGENT_DIR/.auth.XXXXXX")"
+TMP_MODELS="$(mktemp "$AGENT_DIR/.models.XXXXXX")"
+TMP_SETTINGS="$(mktemp "$AGENT_DIR/.settings.XXXXXX")"
+trap 'rm -f "$TMP_AUTH" "$TMP_MODELS" "$TMP_SETTINGS"' EXIT
+
+WROTE=$(BUNDLE_B64="$BUNDLE_B64" \
+        TMP_AUTH="$TMP_AUTH" \
+        TMP_MODELS="$TMP_MODELS" \
+        TMP_SETTINGS="$TMP_SETTINGS" \
+        python3 - <<'PYEOF'
+import base64, json, os
+b = json.loads(base64.b64decode(os.environ["BUNDLE_B64"]).decode("utf-8"))
+wrote = []
+def dump(key, path):
+    v = b.get(key)
+    if v is None:
+        return
+    with open(path, "w") as f:
+        json.dump(v, f, indent=2)
+        f.write("\n")
+    wrote.append(key)
+dump("auth", os.environ["TMP_AUTH"])
+dump("models", os.environ["TMP_MODELS"])
+dump("settings", os.environ["TMP_SETTINGS"])
+print(",".join(wrote))
+PYEOF
+)
+
+# Hold flock on auth.json.lock for the duration of the install so pi sessions
+# don't observe a half-written auth.json. Pi uses the same lockfile via fs2.
+LOCK="$AGENT_DIR/auth.json.lock"
+touch "$LOCK"
+exec 9<"$LOCK"
+if command -v flock >/dev/null 2>&1; then
+    flock -x 9
+fi
+
+install_one() {
+    local key="$1" tmp="$2" dest="$3"
+    if [[ ",$WROTE," == *",${key},"* ]]; then
+        chmod 600 "$tmp"
+        mv "$tmp" "$dest"
+        echo "remote: wrote $dest"
+    fi
+}
+
+install_one auth     "$TMP_AUTH"     "$AGENT_DIR/auth.json"
+install_one models   "$TMP_MODELS"   "$AGENT_DIR/models.json"
+install_one settings "$TMP_SETTINGS" "$AGENT_DIR/settings.json"
+
+exec 9>&-
+echo "remote: credential bootstrap complete (wrote=${WROTE:-none})"
+CRED_EOF
+)
+    REMOTE_CRED_SCRIPT="${REMOTE_CRED_SCRIPT//__BUNDLE_B64__/${CRED_BUNDLE_B64}}"
+
+    ssh "${SSH_OPTS[@]}" "${PI_REMOTE_SSH_USER}@${PI_REMOTE_SSH_HOST}" bash -s <<EOF
+${REMOTE_CRED_SCRIPT}
+EOF
+fi
 
 log "done"
