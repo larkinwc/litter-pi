@@ -73,6 +73,12 @@
 - Add Android-only behavior:
   - `apps/android/app/` and `apps/android/core/bridge/`
   - keep those files free of duplicated Rust-owned state/reducer logic
+- Add or change the in-process pi coding-agent runtime (tool factory, BYOK, Anthropic OAuth, capability manifest):
+  - `shared/rust-bridge/pi-mobile-client/`
+  - expose new boundary types through `codex-mobile-client` (single UniFFI surface); do not add a parallel mobile crate
+- Add or change the headless pi runner used for host-side debugging and validators:
+  - `services/pi-server-runner/`
+  - keep new runner modes (`--local`, `--byok`, `--oauth-paste`, `--remote-ssh`, `--alleycat-pair`, `--inject-drop`) driven by the same shared Rust client the mobile apps use
 
 ## Drift Guardrails
 - Default to mobile parity. When a change affects shared mobile behavior or a user-facing mobile workflow, implement and verify it for both iOS and Android in the same pass unless it is truly platform-specific.
@@ -94,6 +100,7 @@
 - **androidx.security:security-crypto** — encrypted credential storage.
 ### Rust Shared Layer (Cargo)
 - **codex-app-server-protocol**, **codex-app-server-client**, **codex-protocol**, **codex-core** — upstream Codex crates.
+- **pi_agent_rust (forked submodule)** — second coding-agent runtime, vendored at `shared/third_party/pi_agent_rust/` (litter fork); consumed by `shared/rust-bridge/pi-mobile-client/` and `services/pi-server-runner/`.
 - **tokio-tungstenite** — async WebSocket transport.
 - **russh** — SSH client (shared Rust SSH, replacing platform-native SSH libs).
 - **uniffi** — generates Swift/Kotlin bindings from Rust.
