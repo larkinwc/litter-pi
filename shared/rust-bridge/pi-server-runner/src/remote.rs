@@ -152,6 +152,26 @@ pub enum RemoteTranscriptLine {
         command: Option<String>,
         raw: JsonValue,
     },
+    /// Terminal-state tool execution marker (codex
+    /// `tool_call_update` with `status == completed | failed`, or
+    /// alleycat `item/completed` carrying a tool-execution item).
+    /// Validators key off this line to know a tool call finished.
+    ToolExecResult {
+        tool_call_id: Option<String>,
+        tool_name: Option<String>,
+        command: Option<String>,
+        status: Option<String>,
+        raw: JsonValue,
+    },
+    /// Assistant message chunk. Emitted for both codex
+    /// `agent_message_chunk` notifications and alleycat
+    /// `item/agentMessage/delta` notifications so VAL-REM-010 sees
+    /// the same canonical event_kind set across paths.
+    AgentMessageChunk {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        delta: Option<String>,
+        raw: JsonValue,
+    },
     PromptResult {
         result: JsonValue,
     },
@@ -667,12 +687,14 @@ async fn handle_event(
         AppServerEvent::ServerNotification(notification) => {
             let value = serde_json::to_value(&notification).unwrap_or(JsonValue::Null);
             let (method, params) = split_method_params(value);
-            emit_tool_exec_if_present(events_file, &method, &params).await;
-            let _ = emit_remote_line(
-                events_file,
-                &RemoteTranscriptLine::ServerNotification { method, params },
-            )
-            .await;
+            let canonical = emit_canonical_codex_event(events_file, &method, &params).await;
+            if !canonical {
+                let _ = emit_remote_line(
+                    events_file,
+                    &RemoteTranscriptLine::ServerNotification { method, params },
+                )
+                .await;
+            }
         }
         AppServerEvent::Disconnected { message } => {
             return Err(format!("remote pi acp disconnected: {message}"));
@@ -691,12 +713,14 @@ async fn handle_event(
         }
         AppServerEvent::RawServerNotification { method, params } => {
             let params = params.unwrap_or(JsonValue::Null);
-            emit_tool_exec_if_present(events_file, &method, &params).await;
-            let _ = emit_remote_line(
-                events_file,
-                &RemoteTranscriptLine::ServerNotification { method, params },
-            )
-            .await;
+            let canonical = emit_canonical_codex_event(events_file, &method, &params).await;
+            if !canonical {
+                let _ = emit_remote_line(
+                    events_file,
+                    &RemoteTranscriptLine::ServerNotification { method, params },
+                )
+                .await;
+            }
         }
         other => {
             tracing::debug!(
@@ -798,33 +822,80 @@ fn split_method_params(mut value: JsonValue) -> (String, JsonValue) {
     (method_string, params)
 }
 
-/// If a `session/update` notification carries a tool execution
-/// payload, surface it as a dedicated `tool_exec` transcript line so
-/// validators can grep for it without re-decoding the raw params.
-async fn emit_tool_exec_if_present(
+/// If a codex `session/update` notification carries a tool execution
+/// or assistant-chunk payload, surface it as the canonical
+/// `tool_exec` / `tool_exec_result` / `agent_message_chunk`
+/// transcript line via the shared [`crate::normalize`] helper.
+///
+/// Returns `true` when a canonical line was emitted (which lets the
+/// caller suppress the generic `server_notification` fallback so
+/// VAL-REM-010's `event_kind` set stays aligned with the alleycat
+/// path).
+pub(crate) async fn emit_canonical_codex_event(
     events_file: &mut Option<tokio::fs::File>,
     method: &str,
     params: &JsonValue,
-) {
-    if !method.starts_with("session/") {
-        return;
+) -> bool {
+    use crate::normalize::{NormalizedEventKind, normalize_codex_session_update};
+    let Some(kind) = normalize_codex_session_update(method, params) else {
+        return false;
+    };
+    let update = params.get("update").unwrap_or(params).clone();
+    match kind {
+        NormalizedEventKind::ToolExec => {
+            let (tool_call_id, tool_name, command) = extract_codex_tool_fields(&update);
+            let _ = emit_remote_line(
+                events_file,
+                &RemoteTranscriptLine::ToolExec {
+                    tool_call_id,
+                    tool_name,
+                    command,
+                    raw: update,
+                },
+            )
+            .await;
+        }
+        NormalizedEventKind::ToolExecResult => {
+            let (tool_call_id, tool_name, command) = extract_codex_tool_fields(&update);
+            let status = update
+                .get("status")
+                .and_then(JsonValue::as_str)
+                .map(str::to_string);
+            let _ = emit_remote_line(
+                events_file,
+                &RemoteTranscriptLine::ToolExecResult {
+                    tool_call_id,
+                    tool_name,
+                    command,
+                    status,
+                    raw: update,
+                },
+            )
+            .await;
+        }
+        NormalizedEventKind::AgentMessageChunk => {
+            let delta = update
+                .get("content")
+                .and_then(|c| c.get("text"))
+                .and_then(JsonValue::as_str)
+                .or_else(|| update.get("delta").and_then(JsonValue::as_str))
+                .map(str::to_string);
+            let _ = emit_remote_line(
+                events_file,
+                &RemoteTranscriptLine::AgentMessageChunk { delta, raw: update },
+            )
+            .await;
+        }
     }
-    // Walk the common ACP `update` shape: { update: { sessionUpdate: ..., ... } }
-    // and surface any tool_use / bash arguments. Be conservative: we
-    // emit at most one `tool_exec` per notification, and we keep the
-    // raw payload so the validator has the full context.
-    let update = params.get("update").or(Some(params));
-    let Some(update) = update else { return };
-    let kind = update
-        .get("sessionUpdate")
-        .or_else(|| update.get("type"))
-        .and_then(JsonValue::as_str);
-    if !matches!(
-        kind,
-        Some("tool_call") | Some("tool_call_update") | Some("toolCall") | Some("toolUse")
-    ) {
-        return;
-    }
+    true
+}
+
+/// Pull the conventional `(tool_call_id, tool_name, command)` triple
+/// out of a codex `update` payload. Used by both the `tool_exec` and
+/// `tool_exec_result` dispatchers.
+fn extract_codex_tool_fields(
+    update: &JsonValue,
+) -> (Option<String>, Option<String>, Option<String>) {
     let tool_call_id = update
         .get("toolCallId")
         .or_else(|| update.get("tool_call_id"))
@@ -843,16 +914,7 @@ async fn emit_tool_exec_if_present(
         .and_then(|v| v.get("command"))
         .and_then(JsonValue::as_str)
         .map(str::to_string);
-    let _ = emit_remote_line(
-        events_file,
-        &RemoteTranscriptLine::ToolExec {
-            tool_call_id,
-            tool_name,
-            command,
-            raw: update.clone(),
-        },
-    )
-    .await;
+    (tool_call_id, tool_name, command)
 }
 
 #[cfg(test)]
@@ -1015,7 +1077,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn emit_tool_exec_if_present_surfaces_bash_command() {
+    async fn emit_canonical_codex_event_surfaces_bash_command() {
         let tmp = tempfile::tempdir().expect("tmpdir");
         let path = tmp.path().join("tool.jsonl");
         let mut file = Some(
@@ -1036,7 +1098,8 @@ mod tests {
                 "rawInput": {"command": "ls /root"}
             }
         });
-        emit_tool_exec_if_present(&mut file, "session/update", &params).await;
+        let emitted = emit_canonical_codex_event(&mut file, "session/update", &params).await;
+        assert!(emitted, "tool_call session/update should emit canonical line");
         drop(file);
         let body = std::fs::read_to_string(&path).expect("read");
         let line = body.lines().next().expect("one line");

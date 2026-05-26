@@ -60,6 +60,7 @@ use pi_mobile_client::{
 use serde::Serialize;
 
 mod alleycat;
+mod normalize;
 mod remote;
 
 use alleycat::{AlleycatPairArgs, drive_alleycat_pair};

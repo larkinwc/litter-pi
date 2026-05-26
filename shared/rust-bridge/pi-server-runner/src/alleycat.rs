@@ -452,12 +452,15 @@ async fn handle_alleycat_event(
         AppServerEvent::ServerNotification(notification) => {
             let value = serde_json::to_value(&notification).unwrap_or(JsonValue::Null);
             let (method, params) = split_method_params(value);
-            emit_alleycat_tool_exec_if_present(events_file, &method, &params).await;
-            let _ = emit_remote_line(
-                events_file,
-                &RemoteTranscriptLine::ServerNotification { method, params },
-            )
-            .await;
+            let canonical =
+                emit_canonical_alleycat_event(events_file, &method, &params).await;
+            if !canonical {
+                let _ = emit_remote_line(
+                    events_file,
+                    &RemoteTranscriptLine::ServerNotification { method, params },
+                )
+                .await;
+            }
         }
         AppServerEvent::Disconnected { message } => {
             return Err(format!("alleycat pi disconnected: {message}"));
@@ -495,12 +498,15 @@ async fn handle_alleycat_event(
         }
         AppServerEvent::RawServerNotification { method, params } => {
             let params = params.unwrap_or(JsonValue::Null);
-            emit_alleycat_tool_exec_if_present(events_file, &method, &params).await;
-            let _ = emit_remote_line(
-                events_file,
-                &RemoteTranscriptLine::ServerNotification { method, params },
-            )
-            .await;
+            let canonical =
+                emit_canonical_alleycat_event(events_file, &method, &params).await;
+            if !canonical {
+                let _ = emit_remote_line(
+                    events_file,
+                    &RemoteTranscriptLine::ServerNotification { method, params },
+                )
+                .await;
+            }
         }
         other => {
             tracing::debug!(
@@ -513,41 +519,97 @@ async fn handle_alleycat_event(
     Ok(())
 }
 
-/// Surface any alleycat tool-exec notification (`item/started` or
-/// `item/completed` carrying `kind == "execution_started"` /
-/// `"execution_completed"`) as a dedicated `tool_exec` transcript
-/// line. Mirrors the SSH-path helper closely so VAL-REM-010's diff
-/// stays clean.
-async fn emit_alleycat_tool_exec_if_present(
+/// Surface any alleycat-pi-bridge notification that maps onto a
+/// canonical [`NormalizedEventKind`] as the corresponding
+/// `tool_exec` / `tool_exec_result` / `agent_message_chunk`
+/// transcript line. Returns `true` when a canonical line was
+/// emitted, so the caller can suppress the generic
+/// `server_notification` fallback and keep VAL-REM-010's
+/// `event_kind` set aligned with the SSH path.
+async fn emit_canonical_alleycat_event(
     events_file: &mut Option<tokio::fs::File>,
     method: &str,
     params: &JsonValue,
-) {
-    if method != "item/started" && method != "item/completed" {
-        return;
-    }
+) -> bool {
+    use crate::normalize::{
+        NormalizedEventKind, normalize_alleycat_item, normalize_alleycat_method,
+    };
+    let kind = normalize_alleycat_item(method, params)
+        .or_else(|| normalize_alleycat_method(method));
+    let Some(kind) = kind else { return false };
+
+    // For item-based notifications, source extraction fields from
+    // `item`/`itemUpdate`. For method-only notifications (the
+    // `item/agentMessage/delta` shape) the params themselves carry
+    // the delta text.
     let item = params
         .get("item")
         .or_else(|| params.get("itemUpdate"))
-        .unwrap_or(params);
-    // alleycat-pi-bridge surfaces tool execution via item objects
-    // with `type == "commandExecution"`. Older codex shapes used the
-    // string field `kind == "execution_started"` etc — both are
-    // accepted so a single helper handles both transports.
-    let kind = item
-        .get("type")
-        .and_then(JsonValue::as_str)
-        .or_else(|| item.get("kind").and_then(JsonValue::as_str));
-    if !matches!(
-        kind,
-        Some("execution_started")
-            | Some("execution_completed")
-            | Some("command_exec")
-            | Some("tool_exec")
-            | Some("commandExecution")
-    ) {
-        return;
+        .cloned()
+        .unwrap_or(JsonValue::Null);
+
+    match kind {
+        NormalizedEventKind::ToolExec => {
+            let (tool_call_id, tool_name, command) = extract_alleycat_tool_fields(&item);
+            let _ = emit_remote_line(
+                events_file,
+                &RemoteTranscriptLine::ToolExec {
+                    tool_call_id,
+                    tool_name,
+                    command,
+                    raw: item,
+                },
+            )
+            .await;
+        }
+        NormalizedEventKind::ToolExecResult => {
+            let (tool_call_id, tool_name, command) = extract_alleycat_tool_fields(&item);
+            let status = item
+                .get("status")
+                .and_then(JsonValue::as_str)
+                .map(str::to_string);
+            let _ = emit_remote_line(
+                events_file,
+                &RemoteTranscriptLine::ToolExecResult {
+                    tool_call_id,
+                    tool_name,
+                    command,
+                    status,
+                    raw: item,
+                },
+            )
+            .await;
+        }
+        NormalizedEventKind::AgentMessageChunk => {
+            // `item/agentMessage/delta` carries the chunk under
+            // `params.delta`; the `item/started`/`item/completed`
+            // shape carries the full text under `item.text` (and
+            // `item.text` is "" on started, populated on completed).
+            let delta = params
+                .get("delta")
+                .and_then(JsonValue::as_str)
+                .map(str::to_string)
+                .or_else(|| {
+                    item.get("text").and_then(JsonValue::as_str).and_then(|s| {
+                        if s.is_empty() { None } else { Some(s.to_string()) }
+                    })
+                });
+            let raw = if item.is_null() { params.clone() } else { item };
+            let _ = emit_remote_line(
+                events_file,
+                &RemoteTranscriptLine::AgentMessageChunk { delta, raw },
+            )
+            .await;
+        }
     }
+    true
+}
+
+/// Pull the conventional `(tool_call_id, tool_name, command)` triple
+/// out of an alleycat `item` payload.
+fn extract_alleycat_tool_fields(
+    item: &JsonValue,
+) -> (Option<String>, Option<String>, Option<String>) {
     let tool_call_id = item
         .get("id")
         .or_else(|| item.get("itemId"))
@@ -569,16 +631,7 @@ async fn emit_alleycat_tool_exec_if_present(
                 .and_then(JsonValue::as_str)
                 .map(str::to_string)
         });
-    let _ = emit_remote_line(
-        events_file,
-        &RemoteTranscriptLine::ToolExec {
-            tool_call_id,
-            tool_name,
-            command,
-            raw: item.clone(),
-        },
-    )
-    .await;
+    (tool_call_id, tool_name, command)
 }
 
 async fn auto_approve_alleycat_permission(
@@ -940,7 +993,9 @@ mod tests {
                 "status": "inProgress",
             }
         });
-        emit_alleycat_tool_exec_if_present(&mut events_file, "item/started", &params).await;
+        let emitted =
+            emit_canonical_alleycat_event(&mut events_file, "item/started", &params).await;
+        assert!(emitted, "commandExecution item/started should emit canonical line");
         drop(events_file);
 
         let lines = std::fs::read_to_string(&path).expect("read");
