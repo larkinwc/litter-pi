@@ -2011,6 +2011,12 @@ fn route_app_server_event(
             append_android_debug_log(&format!("disconnected={message}"));
             let _ = health_tx.send(ConnectionHealth::Disconnected);
         }
+        AppServerEvent::RawServerRequest { method, .. } => {
+            warn!("event: ignoring raw remote app-server request method={method}");
+        }
+        AppServerEvent::RawServerNotification { method, .. } => {
+            tracing::debug!("event: ignoring raw remote app-server notification method={method}");
+        }
     }
 }
 

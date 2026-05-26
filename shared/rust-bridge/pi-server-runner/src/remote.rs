@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use codex_app_server_client::{AppServerEvent, RemoteAppServerClient};
+use codex_app_server_protocol::{JSONRPCErrorError, RequestId};
 use codex_mobile_client::ssh::pi_bootstrap::{SshSessionConfig, bootstrap_pi_server};
 use codex_mobile_client::ssh::{SshAuth, SshClient, SshCredentials};
 use futures::future::FutureExt;
@@ -91,6 +92,15 @@ pub enum RemoteTranscriptLine {
     ServerRequest {
         method: String,
         params: JsonValue,
+    },
+    /// A `session/request_permission` (or other raw) request from the
+    /// remote pi acp server that the runner auto-resolved on behalf of
+    /// the validator. The transcript records the resolution so VAL-REM
+    /// runs can verify the approval pipeline fired.
+    PermissionAutoApproved {
+        request_id: String,
+        method: String,
+        tool_name: Option<String>,
     },
     ToolExec {
         tool_call_id: Option<String>,
@@ -396,21 +406,36 @@ async fn drive_turn(
             {"type": "text", "text": prompt}
         ],
     });
-    // RemoteAppServerClient::send_raw_request takes `&self` and
-    // next_event takes `&mut self`, so we cannot race them under one
-    // borrow. Instead, run the prompt to completion (notifications
-    // queue inside the wire's event_rx during the turn), then drain
-    // the queued events non-blockingly afterward so we still surface
-    // every `session/update` in transcript order.
-    let prompt_result = client
-        .send_raw_request("session/prompt", Some(prompt_params))
-        .await
-        .map_err(|e| format!("session/prompt transport: {e}"))?
-        .map_err(|e| format!("session/prompt server: {} ({})", e.message, e.code))?;
+    // session/prompt is a long-running call. Pi may send inbound
+    // `session/request_permission` server requests during the turn
+    // that block tool execution until answered. We need to:
+    //   * surface streaming notifications in real time, and
+    //   * auto-approve permission requests so the agent can execute
+    //     tools (VAL-REM-004/005 expect Bash tool exec).
+    //
+    // Dispatch the prompt via the command channel directly so the
+    // result lands on a `oneshot` while we keep the client (with
+    // exclusive ownership of `next_event`) free to drive the event
+    // loop in this task.
+    let prompt_future = client.send_raw_request("session/prompt", Some(prompt_params));
+    tokio::pin!(prompt_future);
+    let prompt_result = loop {
+        tokio::select! {
+            biased;
+            res = &mut prompt_future => {
+                break res
+                    .map_err(|e| format!("session/prompt transport: {e}"))?
+                    .map_err(|e| format!("session/prompt server: {} ({})", e.message, e.code))?;
+            }
+            event = client.next_event() => {
+                let Some(event) = event else { break json!({}); };
+                handle_event(client, event, events_file).await?;
+            }
+        }
+    };
+    // Drain any in-flight events that arrived after the prompt
+    // response but before the wire bookkeeping settled.
     loop {
-        // 50ms grace per tick so any in-flight notifications that
-        // arrived after the prompt response (but before the wire's
-        // bookkeeping settled) still get drained.
         let event = match tokio::time::timeout(
             Duration::from_millis(50),
             client.next_event(),
@@ -421,37 +446,7 @@ async fn drive_turn(
             Ok(None) => break,
             Err(_) => break,
         };
-        match event {
-            AppServerEvent::ServerNotification(notification) => {
-                let value = serde_json::to_value(&notification).unwrap_or(JsonValue::Null);
-                let (method, params) = split_method_params(value);
-                emit_tool_exec_if_present(events_file, &method, &params).await;
-                let _ = emit_remote_line(
-                    events_file,
-                    &RemoteTranscriptLine::ServerNotification { method, params },
-                )
-                .await;
-            }
-            AppServerEvent::Disconnected { message } => {
-                return Err(format!("remote pi acp disconnected: {message}"));
-            }
-            AppServerEvent::ServerRequest(request) => {
-                let value = serde_json::to_value(&request).unwrap_or(JsonValue::Null);
-                let (method, params) = split_method_params(value);
-                let _ = emit_remote_line(
-                    events_file,
-                    &RemoteTranscriptLine::ServerRequest { method, params },
-                )
-                .await;
-            }
-            other => {
-                tracing::debug!(
-                    target: "pi_server_runner",
-                    event = ?other,
-                    "ignoring app-server event during turn drain"
-                );
-            }
-        }
+        handle_event(client, event, events_file).await?;
     }
 
     let stop_reason = prompt_result
@@ -469,6 +464,134 @@ async fn drive_turn(
     )
     .await;
     Ok(())
+}
+
+/// Dispatch a single `AppServerEvent` emitted by the wire into the
+/// JSONL transcript. Permission requests (`session/request_permission`)
+/// are auto-approved with the first `allow-once` option so the agent
+/// can proceed to execute the requested tool.
+async fn handle_event(
+    client: &RemoteAppServerClient,
+    event: AppServerEvent,
+    events_file: &mut Option<tokio::fs::File>,
+) -> Result<(), String> {
+    match event {
+        AppServerEvent::ServerNotification(notification) => {
+            let value = serde_json::to_value(&notification).unwrap_or(JsonValue::Null);
+            let (method, params) = split_method_params(value);
+            emit_tool_exec_if_present(events_file, &method, &params).await;
+            let _ = emit_remote_line(
+                events_file,
+                &RemoteTranscriptLine::ServerNotification { method, params },
+            )
+            .await;
+        }
+        AppServerEvent::Disconnected { message } => {
+            return Err(format!("remote pi acp disconnected: {message}"));
+        }
+        AppServerEvent::ServerRequest(request) => {
+            let value = serde_json::to_value(&request).unwrap_or(JsonValue::Null);
+            let (method, params) = split_method_params(value);
+            let _ = emit_remote_line(
+                events_file,
+                &RemoteTranscriptLine::ServerRequest { method, params },
+            )
+            .await;
+        }
+        AppServerEvent::RawServerRequest { id, method, params } => {
+            auto_approve_permission(client, id, method, params, events_file).await;
+        }
+        AppServerEvent::RawServerNotification { method, params } => {
+            let params = params.unwrap_or(JsonValue::Null);
+            emit_tool_exec_if_present(events_file, &method, &params).await;
+            let _ = emit_remote_line(
+                events_file,
+                &RemoteTranscriptLine::ServerNotification { method, params },
+            )
+            .await;
+        }
+        other => {
+            tracing::debug!(
+                target: "pi_server_runner",
+                event = ?other,
+                "ignoring app-server event"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Auto-approve a raw `session/request_permission` (or comparable)
+/// request from the remote pi acp server. Picks the first option
+/// whose `optionId` is `allow-once` (pi's canonical approve token);
+/// otherwise picks the first option in the list. Falls back to a
+/// generic `{"outcome":"selected","optionId":"allow-once"}` payload
+/// when the request did not carry an explicit options list.
+async fn auto_approve_permission(
+    client: &RemoteAppServerClient,
+    id: RequestId,
+    method: String,
+    params: Option<JsonValue>,
+    events_file: &mut Option<tokio::fs::File>,
+) {
+    let params_val = params.unwrap_or(JsonValue::Null);
+    let tool_name = params_val
+        .get("toolCall")
+        .and_then(|tc| tc.get("toolName").or_else(|| tc.get("name")))
+        .and_then(JsonValue::as_str)
+        .map(str::to_string);
+    let option_id = params_val
+        .get("options")
+        .and_then(JsonValue::as_array)
+        .and_then(|opts| {
+            opts.iter()
+                .find(|o| {
+                    o.get("optionId").and_then(JsonValue::as_str) == Some("allow-once")
+                })
+                .or_else(|| opts.first())
+        })
+        .and_then(|o| o.get("optionId").and_then(JsonValue::as_str))
+        .unwrap_or("allow-once")
+        .to_string();
+    let result = json!({
+        "outcome": {
+            "outcome": "selected",
+            "optionId": option_id,
+        }
+    });
+    let id_str = match &id {
+        RequestId::String(s) => s.clone(),
+        RequestId::Integer(n) => n.to_string(),
+    };
+    let _ = emit_remote_line(
+        events_file,
+        &RemoteTranscriptLine::PermissionAutoApproved {
+            request_id: id_str,
+            method: method.clone(),
+            tool_name,
+        },
+    )
+    .await;
+    if let Err(err) = client.resolve_server_request(id, result).await {
+        tracing::warn!(
+            target: "pi_server_runner",
+            %err,
+            method,
+            "failed to auto-approve permission request"
+        );
+        // Best-effort follow-up rejection so the remote does not hang
+        // indefinitely waiting for a response.
+        let _ = client
+            .reject_server_request(
+                RequestId::String(format!("noop-{}", method)),
+                JSONRPCErrorError {
+                    code: -32000,
+                    message: format!("resolve failed: {err}"),
+                    data: None,
+                },
+            )
+            .await;
+    }
 }
 
 /// Split a typed notification/request JSON value into its `method`
@@ -669,6 +792,38 @@ mod tests {
         let (method, params) = split_method_params(value);
         assert_eq!(method, "session/update");
         assert_eq!(params["sessionId"], "s1");
+    }
+
+    #[tokio::test]
+    async fn emit_remote_line_serializes_permission_auto_approved() {
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let path = tmp.path().join("perm.jsonl");
+        let mut file = Some(
+            tokio::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&path)
+                .await
+                .expect("open"),
+        );
+        emit_remote_line(
+            &mut file,
+            &RemoteTranscriptLine::PermissionAutoApproved {
+                request_id: "pi-tool-permission-0".to_string(),
+                method: "session/request_permission".to_string(),
+                tool_name: Some("bash".to_string()),
+            },
+        )
+        .await
+        .expect("emit");
+        drop(file);
+        let body = std::fs::read_to_string(&path).expect("read");
+        let parsed: JsonValue = serde_json::from_str(body.trim()).expect("json");
+        assert_eq!(parsed["event_kind"], "permission_auto_approved");
+        assert_eq!(parsed["request_id"], "pi-tool-permission-0");
+        assert_eq!(parsed["method"], "session/request_permission");
+        assert_eq!(parsed["tool_name"], "bash");
     }
 
     #[tokio::test]
