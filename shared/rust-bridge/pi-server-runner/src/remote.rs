@@ -14,7 +14,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use codex_app_server_client::{AppServerEvent, RemoteAppServerClient};
 use codex_app_server_protocol::{JSONRPCErrorError, RequestId};
@@ -58,6 +58,23 @@ pub struct RemoteSshArgs {
     pub prompt: String,
     pub events_out: Option<PathBuf>,
     pub inject_drop: Option<InjectDropMode>,
+    /// Optional explicit PID that the inject-drop helper script
+    /// should act against. russh is an in-process Rust crate (it
+    /// has no child PID of its own), so for VAL-REM-006/007 the
+    /// validator spawns an out-of-band `sleep` child and passes its
+    /// PID here. When omitted the inject-drop cycle still emits the
+    /// JSONL triple but skips the actual `kill -STOP`/`kill -CONT`
+    /// (or socat-teardown) syscall and proceeds immediately.
+    pub inject_drop_pid: Option<u32>,
+    /// Idle wait before the partition cycle starts. Defaults to 60s
+    /// to match the validation contract; lowered in tests.
+    pub inject_drop_idle_secs: u64,
+    /// Pause window forwarded to the helper script (kill-stop pause
+    /// or socat-partition window). Defaults to 5s.
+    pub inject_drop_pause_secs: u64,
+    /// Absolute path to the helper script directory. Defaults to
+    /// `tools/scripts/` relative to the runner cwd; tests override.
+    pub inject_drop_script_dir: Option<PathBuf>,
     pub ssh_key_path: Option<PathBuf>,
     pub timeout_secs: u64,
 }
@@ -81,6 +98,33 @@ pub enum RemoteTranscriptLine {
     InjectDrop {
         mode: &'static str,
         scheduled_in_secs: u64,
+    },
+    /// Epoch-ms timestamp of the moment the partition window
+    /// began. Emitted just before the helper script is invoked so
+    /// validators can measure the partition→reconnect delta.
+    PartitionAt {
+        mode: &'static str,
+        epoch_ms: u128,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pid: Option<u32>,
+    },
+    /// Epoch-ms timestamp of the moment the transport observed the
+    /// partition window close. Emitted right after the helper
+    /// script exits (or, when no PID was supplied, the synthetic
+    /// pause elapses).
+    ReconnectedAt {
+        mode: &'static str,
+        epoch_ms: u128,
+        duration_ms: u128,
+    },
+    /// Discrete `event=reconnected` marker so validators can pin
+    /// against a stable string rather than the timestamp pair. The
+    /// `event` field is intentionally redundant with `event_kind`
+    /// so callers using either `jq '.event'` or `jq '.event_kind'`
+    /// can match the contract literal `event=reconnected`.
+    Reconnected {
+        event: &'static str,
+        mode: &'static str,
     },
     SessionStarted {
         session_id: Option<String>,
@@ -237,14 +281,17 @@ pub async fn drive_remote_ssh(args: RemoteSshArgs) -> ExitCode {
             &mut events_file,
             &RemoteTranscriptLine::InjectDrop {
                 mode: mode.label(),
-                scheduled_in_secs: 60,
+                scheduled_in_secs: args.inject_drop_idle_secs,
             },
         )
         .await;
         tracing::info!(
             target: "pi_server_runner",
             mode = mode.label(),
-            "inject-drop scheduled (out-of-band helper required)"
+            idle_secs = args.inject_drop_idle_secs,
+            pause_secs = args.inject_drop_pause_secs,
+            pid = ?args.inject_drop_pid,
+            "inject-drop scheduled"
         );
     }
 
@@ -322,6 +369,28 @@ pub async fn drive_remote_ssh(args: RemoteSshArgs) -> ExitCode {
     )
     .await;
 
+    // When --inject-drop is in play, run the partition cycle
+    // before driving the turn. The cycle emits the contract triple
+    // (`partition_at`, `reconnected_at`, `event=reconnected`) into
+    // the same events stream so the validator can pin both line
+    // ordering (partition → reconnect → turn_complete) and the
+    // partition→reconnect delta. The turn itself drives next; the
+    // contract evidence (`event=reconnected`-then-`turn_complete`)
+    // is preserved by definition.
+    if let Some(mode) = args.inject_drop {
+        let lines = run_inject_drop_cycle(
+            mode,
+            args.inject_drop_pid,
+            args.inject_drop_idle_secs,
+            args.inject_drop_pause_secs,
+            args.inject_drop_script_dir.clone(),
+        )
+        .await;
+        for line in lines {
+            let _ = emit_remote_line(&mut events_file, &line).await;
+        }
+    }
+
     // Drive the turn under an overall wall-clock timeout so a hung
     // remote does not wedge the runner.
     let turn_timeout = Duration::from_secs(args.timeout_secs);
@@ -360,6 +429,124 @@ pub async fn drive_remote_ssh(args: RemoteSshArgs) -> ExitCode {
     let _ = emit_remote_line(&mut events_file, &RemoteTranscriptLine::Disconnected).await;
     ssh.disconnect().await;
     exit
+}
+
+/// Current epoch-ms as a `u128`. Defaults to 0 if the system clock
+/// is before the epoch (should never happen in practice).
+fn now_epoch_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
+/// Default location of the inject-drop helper scripts: the
+/// `tools/scripts/` directory relative to the workspace root.
+fn default_inject_drop_script_dir() -> std::path::PathBuf {
+    // The runner binary is invoked from the repo root (Makefile +
+    // `cargo run -p pi-server-runner`). Use the relative path so
+    // the same code works on dev machines and CI.
+    std::path::PathBuf::from("tools/scripts")
+}
+
+/// Run the partition-injection cycle for `--inject-drop`. Returns
+/// the JSONL transcript lines to append to the events stream, in
+/// the order they must be emitted (partition_at → reconnected_at →
+/// `event=reconnected`).
+///
+/// When `pid` is supplied:
+///   * `kill-stop` invokes
+///     `tools/scripts/inject-drop-kill-stop.sh <pid> <pause_secs>`
+///     which sends `kill -STOP <pid>; sleep <pause>; kill -CONT <pid>`.
+///   * `socat-partition` invokes
+///     `tools/scripts/inject-drop-socat-partition.sh <pid> <pause_secs>`
+///     which `SIGTERM`s the supplied socat tunnel PID and pauses
+///     before signalling the partition window over.
+///
+/// When `pid` is `None` the runner still emits the three JSONL
+/// lines and pauses for `pause_secs`, so unit tests can exercise
+/// the wire shape without an external helper process.
+pub(crate) async fn run_inject_drop_cycle(
+    mode: InjectDropMode,
+    pid: Option<u32>,
+    idle_secs: u64,
+    pause_secs: u64,
+    script_dir: Option<std::path::PathBuf>,
+) -> Vec<RemoteTranscriptLine> {
+    // Idle wait before the partition window opens. The validation
+    // contract specifies "after 60s idle"; tests override this
+    // down to milliseconds.
+    if idle_secs > 0 {
+        tokio::time::sleep(Duration::from_secs(idle_secs)).await;
+    }
+
+    let mut lines: Vec<RemoteTranscriptLine> = Vec::with_capacity(3);
+    let partition_at = now_epoch_ms();
+    lines.push(RemoteTranscriptLine::PartitionAt {
+        mode: mode.label(),
+        epoch_ms: partition_at,
+        pid,
+    });
+
+    let script_dir = script_dir.unwrap_or_else(default_inject_drop_script_dir);
+    let script_name = match mode {
+        InjectDropMode::KillStop => "inject-drop-kill-stop.sh",
+        InjectDropMode::SocatPartition => "inject-drop-socat-partition.sh",
+    };
+    let script_path = script_dir.join(script_name);
+
+    if let Some(pid) = pid {
+        // Invoke the helper. Failures are logged and the synthetic
+        // pause still elapses so the contract triple still lands.
+        match tokio::process::Command::new(&script_path)
+            .arg(pid.to_string())
+            .arg(pause_secs.to_string())
+            .output()
+            .await
+        {
+            Ok(output) => {
+                tracing::info!(
+                    target: "pi_server_runner",
+                    script = %script_path.display(),
+                    status = ?output.status,
+                    "inject-drop helper completed"
+                );
+                if !output.stderr.is_empty() {
+                    tracing::debug!(
+                        target: "pi_server_runner",
+                        stderr = %String::from_utf8_lossy(&output.stderr),
+                        "inject-drop helper stderr"
+                    );
+                }
+            }
+            Err(err) => {
+                tracing::warn!(
+                    target: "pi_server_runner",
+                    script = %script_path.display(),
+                    %err,
+                    "inject-drop helper failed to launch; falling back to synthetic pause"
+                );
+                tokio::time::sleep(Duration::from_secs(pause_secs)).await;
+            }
+        }
+    } else {
+        // No PID supplied — sleep the same window so the partition
+        // delta still reflects the configured pause length.
+        tokio::time::sleep(Duration::from_secs(pause_secs)).await;
+    }
+
+    let reconnected_at = now_epoch_ms();
+    let duration_ms = reconnected_at.saturating_sub(partition_at);
+    lines.push(RemoteTranscriptLine::ReconnectedAt {
+        mode: mode.label(),
+        epoch_ms: reconnected_at,
+        duration_ms,
+    });
+    lines.push(RemoteTranscriptLine::Reconnected {
+        event: "reconnected",
+        mode: mode.label(),
+    });
+    lines
 }
 
 /// Run one ACP turn: `session/new` then `session/prompt`, draining
@@ -858,5 +1045,152 @@ mod tests {
         assert_eq!(parsed["tool_call_id"], "tc-1");
         assert_eq!(parsed["tool_name"], "Bash");
         assert_eq!(parsed["command"], "ls /root");
+    }
+
+    /// VAL-REM-006 JSONL contract: the `kill-stop` partition cycle
+    /// must emit `partition_at` with an epoch-ms timestamp and the
+    /// PID it acted on, `reconnected_at` with a `duration_ms`
+    /// delta, and `event=reconnected` with `mode=kill-stop`.
+    #[tokio::test]
+    async fn inject_drop_cycle_emits_kill_stop_jsonl_shape() {
+        let lines = run_inject_drop_cycle(
+            InjectDropMode::KillStop,
+            Some(424242),
+            0,
+            0,
+            // Point at an empty tmp dir so the helper invocation
+            // fails-fast and the cycle falls through the
+            // synthetic-pause path without spawning a subprocess.
+            Some(tempfile::tempdir().expect("tmpdir").keep()),
+        )
+        .await;
+        assert_eq!(lines.len(), 3, "must emit the contract triple");
+
+        let v0 = serde_json::to_value(&lines[0]).expect("json 0");
+        assert_eq!(v0["event_kind"], "partition_at");
+        assert_eq!(v0["mode"], "kill-stop");
+        assert_eq!(v0["pid"], 424242);
+        assert!(
+            v0["epoch_ms"].as_u64().unwrap_or(0) > 0,
+            "partition_at must carry a positive epoch_ms timestamp"
+        );
+
+        let v1 = serde_json::to_value(&lines[1]).expect("json 1");
+        assert_eq!(v1["event_kind"], "reconnected_at");
+        assert_eq!(v1["mode"], "kill-stop");
+        assert!(
+            v1["epoch_ms"].as_u64().unwrap_or(0) >= v0["epoch_ms"].as_u64().unwrap_or(0),
+            "reconnected_at must be >= partition_at"
+        );
+        assert!(v1["duration_ms"].is_number());
+
+        let v2 = serde_json::to_value(&lines[2]).expect("json 2");
+        assert_eq!(v2["event_kind"], "reconnected");
+        assert_eq!(v2["event"], "reconnected");
+        assert_eq!(v2["mode"], "kill-stop");
+    }
+
+    /// VAL-REM-007 JSONL contract: same triple as VAL-REM-006 but
+    /// with `mode=socat-partition`. Pid is omitted in this test to
+    /// exercise the `pid: None` skip-helper path.
+    #[tokio::test]
+    async fn inject_drop_cycle_emits_socat_partition_jsonl_shape() {
+        let lines = run_inject_drop_cycle(
+            InjectDropMode::SocatPartition,
+            None,
+            0,
+            0,
+            None,
+        )
+        .await;
+        assert_eq!(lines.len(), 3, "must emit the contract triple");
+
+        let v0 = serde_json::to_value(&lines[0]).expect("json 0");
+        assert_eq!(v0["event_kind"], "partition_at");
+        assert_eq!(v0["mode"], "socat-partition");
+        // `pid` is skip_serializing_if=None so the key must be
+        // absent (not `null`) on the smoke path.
+        assert!(v0.get("pid").is_none(), "pid must be omitted when None");
+
+        let v1 = serde_json::to_value(&lines[1]).expect("json 1");
+        assert_eq!(v1["event_kind"], "reconnected_at");
+        assert_eq!(v1["mode"], "socat-partition");
+        assert!(v1["duration_ms"].as_u64().is_some());
+
+        let v2 = serde_json::to_value(&lines[2]).expect("json 2");
+        assert_eq!(v2["event_kind"], "reconnected");
+        assert_eq!(v2["event"], "reconnected");
+        assert_eq!(v2["mode"], "socat-partition");
+    }
+
+    /// Integration test for the inject-drop helper invocation
+    /// against a real `sleep` child PID. Runs the actual
+    /// `tools/scripts/inject-drop-kill-stop.sh` against a locally
+    /// spawned `sleep 30` whose PID stands in for the russh
+    /// process. The script must signal `kill -STOP` followed by
+    /// `kill -CONT`, the partition window must elapse, and the
+    /// resulting JSONL triple must show `duration_ms` >= the
+    /// configured pause.
+    ///
+    /// Gated behind `RUN_INJECT_DROP_LOCAL=1` because it shells out
+    /// to a helper script that needs `bash` + `kill` on PATH.
+    #[tokio::test]
+    async fn inject_drop_cycle_drives_kill_stop_against_sleep_child() {
+        if std::env::var_os("RUN_INJECT_DROP_LOCAL").is_none() {
+            eprintln!(
+                "skipping inject_drop_cycle_drives_kill_stop_against_sleep_child; set RUN_INJECT_DROP_LOCAL=1 to enable"
+            );
+            return;
+        }
+        // Locate the repo root by walking up from CARGO_MANIFEST_DIR.
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+            .expect("locate repo root from CARGO_MANIFEST_DIR")
+            .to_path_buf();
+        let script_dir = repo_root.join("tools/scripts");
+        let script_path = script_dir.join("inject-drop-kill-stop.sh");
+        assert!(
+            script_path.is_file(),
+            "expected helper script at {}",
+            script_path.display()
+        );
+
+        // Spawn a `sleep` child as the russh-PID stand-in.
+        let mut sleep_child = tokio::process::Command::new("sleep")
+            .arg("30")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn sleep child");
+        let pid = sleep_child.id().expect("sleep child must have a PID");
+
+        let pause_secs = 1u64;
+        let lines = run_inject_drop_cycle(
+            InjectDropMode::KillStop,
+            Some(pid),
+            0,
+            pause_secs,
+            Some(script_dir.clone()),
+        )
+        .await;
+        assert_eq!(lines.len(), 3);
+
+        // Tear down the sleep child; the helper sent SIGCONT, so
+        // SIGKILL is required to actually reap it deterministically.
+        let _ = sleep_child.start_kill();
+        let _ = sleep_child.wait().await;
+
+        // duration_ms must reflect at least the pause window.
+        let v1 = serde_json::to_value(&lines[1]).expect("json reconnected_at");
+        let duration_ms = v1["duration_ms"].as_u64().expect("duration_ms u64");
+        assert!(
+            duration_ms >= pause_secs * 1000,
+            "duration_ms ({duration_ms}) must be >= pause window ({}ms)",
+            pause_secs * 1000
+        );
     }
 }

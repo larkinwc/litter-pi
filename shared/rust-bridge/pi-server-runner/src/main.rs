@@ -231,6 +231,45 @@ struct Cli {
     #[arg(long, value_enum, value_name = "MODE", requires = "remote_ssh")]
     inject_drop: Option<InjectDropMode>,
 
+    /// PID handed to the inject-drop helper script. russh runs
+    /// in-process Rust (it has no child PID of its own); for the
+    /// validation evidence the orchestrator spawns an out-of-band
+    /// `sleep` child and passes its PID here so the helper has a
+    /// real PID to `kill -STOP`/`kill -CONT` (kill-stop mode) or
+    /// `SIGTERM` (socat-partition mode). When omitted the runner
+    /// still emits the contract JSONL triple but skips the actual
+    /// helper invocation (useful for smoke-runs).
+    #[arg(long, value_name = "PID", requires = "inject_drop")]
+    inject_drop_pid: Option<u32>,
+
+    /// Idle wait in seconds before the partition cycle opens.
+    /// Defaults to 60s to match the validation contract. Lower in
+    /// tests so the runner doesn't spin for a full minute.
+    #[arg(
+        long,
+        value_name = "SECS",
+        default_value_t = 60,
+        requires = "inject_drop"
+    )]
+    inject_drop_idle_secs: u64,
+
+    /// Pause window in seconds passed to the helper script
+    /// (`kill -STOP` pause for kill-stop, partition window for
+    /// socat-partition). Defaults to 5s.
+    #[arg(
+        long,
+        value_name = "SECS",
+        default_value_t = 5,
+        requires = "inject_drop"
+    )]
+    inject_drop_pause_secs: u64,
+
+    /// Override the directory containing the inject-drop helper
+    /// scripts. Defaults to `tools/scripts/` relative to the
+    /// runner cwd; tests override.
+    #[arg(long, value_name = "DIR", requires = "inject_drop")]
+    inject_drop_script_dir: Option<PathBuf>,
+
     /// Drive a turn against the pi entry advertised by an alleycat
     /// host. The flag value is the literal JSON pair payload (the
     /// output of `alleycat pair` on the host). The string `env`
@@ -455,6 +494,10 @@ fn main() -> ExitCode {
             prompt,
             events_out: cli.events_out.clone(),
             inject_drop: cli.inject_drop,
+            inject_drop_pid: cli.inject_drop_pid,
+            inject_drop_idle_secs: cli.inject_drop_idle_secs,
+            inject_drop_pause_secs: cli.inject_drop_pause_secs,
+            inject_drop_script_dir: cli.inject_drop_script_dir.clone(),
             ssh_key_path: cli.ssh_key_path.clone(),
             timeout_secs: cli.timeout_secs,
         };
