@@ -310,9 +310,15 @@ async fn drive_alleycat_turn(
         .await
         .map_err(|e| format!("thread/start transport: {e}"))?
         .map_err(|e| format!("thread/start server: {} ({})", e.message, e.code))?;
+    // alleycat-pi-bridge returns the thread under `result.thread.id`
+    // (matching its full Thread record shape); older codex-style
+    // bridges put it at `result.threadId`. Probe both so this works
+    // against either shape.
     let thread_id = thread_result
-        .get("threadId")
+        .get("thread")
+        .and_then(|v| v.get("id"))
         .and_then(JsonValue::as_str)
+        .or_else(|| thread_result.get("threadId").and_then(JsonValue::as_str))
         .map(str::to_string);
     let _ = emit_remote_line(
         events_file,
@@ -334,23 +340,40 @@ async fn drive_alleycat_turn(
     });
     let turn_future = client.send_raw_request("turn/start", Some(turn_params));
     tokio::pin!(turn_future);
-    let turn_result = loop {
+    let mut turn_result: Option<JsonValue> = None;
+    let mut turn_completed_params: Option<JsonValue> = None;
+    // alleycat-pi-bridge acknowledges `turn/start` immediately with an
+    // `inProgress` turn record, then streams `turn/started` /
+    // `item/started` / `item/completed` notifications and finally a
+    // `turn/completed` notification when the agent is done. We have
+    // to keep draining events past the request ack until that
+    // terminal notification arrives so VAL-REM-010 can observe the
+    // full event ordering.
+    loop {
         tokio::select! {
             biased;
-            res = &mut turn_future => {
-                break res
+            res = &mut turn_future, if turn_result.is_none() => {
+                let result = res
                     .map_err(|e| format!("turn/start transport: {e}"))?
                     .map_err(|e| format!("turn/start server: {} ({})", e.message, e.code))?;
+                turn_result = Some(result);
             }
             event = client.next_event() => {
-                let Some(event) = event else { break json!({}); };
+                let Some(event) = event else { break; };
+                if let Some(params) = turn_completed_from_event(&event) {
+                    handle_alleycat_event(client, event, events_file).await?;
+                    turn_completed_params = Some(params);
+                    break;
+                }
                 handle_alleycat_event(client, event, events_file).await?;
             }
         }
-    };
+    }
+    // Drain any trailing notifications that arrive in the small window
+    // after `turn/completed` (e.g. `thread/tokenUsage/updated`).
     loop {
         let event = match tokio::time::timeout(
-            Duration::from_millis(50),
+            Duration::from_millis(100),
             client.next_event(),
         )
         .await
@@ -362,10 +385,19 @@ async fn drive_alleycat_turn(
         handle_alleycat_event(client, event, events_file).await?;
     }
 
-    let stop_reason = turn_result
-        .get("stopReason")
+    let turn_result = turn_result.unwrap_or(JsonValue::Null);
+    let stop_reason = turn_completed_params
+        .as_ref()
+        .and_then(|p| p.get("turn"))
+        .and_then(|t| t.get("stopReason").or_else(|| t.get("status")))
         .and_then(JsonValue::as_str)
-        .map(str::to_string);
+        .map(str::to_string)
+        .or_else(|| {
+            turn_result
+                .get("stopReason")
+                .and_then(JsonValue::as_str)
+                .map(str::to_string)
+        });
     let _ = emit_remote_line(
         events_file,
         &RemoteTranscriptLine::PromptResult { result: turn_result.clone() },
@@ -377,6 +409,32 @@ async fn drive_alleycat_turn(
     )
     .await;
     Ok(())
+}
+
+/// Detect the `turn/completed` notification — the canonical terminal
+/// event on the alleycat-pi-bridge turn lifecycle. Returns the
+/// notification params when present so callers can extract
+/// `stopReason` / `status`.
+fn turn_completed_from_event(event: &AppServerEvent) -> Option<JsonValue> {
+    match event {
+        AppServerEvent::ServerNotification(notification) => {
+            let value = serde_json::to_value(notification).ok()?;
+            let method = value.get("method").and_then(JsonValue::as_str)?;
+            if method == "turn/completed" {
+                Some(value.get("params").cloned().unwrap_or(JsonValue::Null))
+            } else {
+                None
+            }
+        }
+        AppServerEvent::RawServerNotification { method, params } => {
+            if method == "turn/completed" {
+                Some(params.clone().unwrap_or(JsonValue::Null))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Translate a raw alleycat `AppServerEvent` into the canonical
@@ -405,13 +463,32 @@ async fn handle_alleycat_event(
             return Err(format!("alleycat pi disconnected: {message}"));
         }
         AppServerEvent::ServerRequest(request) => {
+            // alleycat-pi-bridge surfaces tool-exec approval as a
+            // typed ServerRequest (e.g.
+            // `item/commandExecution/requestApproval`). The codex
+            // AppServerClient routes typed permission requests through
+            // here; auto-approve them so the bridge can resume the
+            // turn instead of hanging on the operator confirmation.
             let value = serde_json::to_value(&request).unwrap_or(JsonValue::Null);
+            let id = value
+                .get("id")
+                .and_then(|v| {
+                    if let Some(s) = v.as_str() {
+                        Some(RequestId::String(s.to_string()))
+                    } else {
+                        v.as_i64().map(RequestId::Integer)
+                    }
+                })
+                .unwrap_or_else(|| RequestId::String(String::new()));
             let (method, params) = split_method_params(value);
-            let _ = emit_remote_line(
-                events_file,
-                &RemoteTranscriptLine::ServerRequest { method, params },
-            )
-            .await;
+            // Skip the `ServerRequest` transcript line: the SSH path
+            // does not surface a server_request kind, only the
+            // resulting `permission_auto_approved`. VAL-REM-010
+            // normalises on event_kind ordering, so we keep the
+            // alleycat transcript aligned by emitting only the auto-
+            // approve line.
+            auto_approve_alleycat_permission(client, id, method, Some(params), events_file)
+                .await;
         }
         AppServerEvent::RawServerRequest { id, method, params } => {
             auto_approve_alleycat_permission(client, id, method, params, events_file).await;
@@ -453,13 +530,21 @@ async fn emit_alleycat_tool_exec_if_present(
         .get("item")
         .or_else(|| params.get("itemUpdate"))
         .unwrap_or(params);
-    let kind = item.get("kind").and_then(JsonValue::as_str);
+    // alleycat-pi-bridge surfaces tool execution via item objects
+    // with `type == "commandExecution"`. Older codex shapes used the
+    // string field `kind == "execution_started"` etc — both are
+    // accepted so a single helper handles both transports.
+    let kind = item
+        .get("type")
+        .and_then(JsonValue::as_str)
+        .or_else(|| item.get("kind").and_then(JsonValue::as_str));
     if !matches!(
         kind,
         Some("execution_started")
             | Some("execution_completed")
             | Some("command_exec")
             | Some("tool_exec")
+            | Some("commandExecution")
     ) {
         return;
     }
@@ -828,4 +913,58 @@ mod tests {
     // network test here.
     #[allow(dead_code)]
     fn _alleycat_error_type_is_re_exported(_e: AlleycatError) {}
+
+    #[tokio::test]
+    async fn tool_exec_emitter_recognises_command_execution_type() {
+        // alleycat-pi-bridge surfaces tool execution via
+        // `item/started` notifications whose item carries
+        // `type == "commandExecution"`. The emitter must surface a
+        // `tool_exec` transcript line for that shape so VAL-REM-010
+        // can diff the alleycat path against the SSH path.
+        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+        let path = tmp.path().to_path_buf();
+        let mut events_file = Some(
+            tokio::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&path)
+                .await
+                .expect("open"),
+        );
+        let params = json!({
+            "item": {
+                "type": "commandExecution",
+                "command": "ls /root",
+                "id": "tool-1",
+                "status": "inProgress",
+            }
+        });
+        emit_alleycat_tool_exec_if_present(&mut events_file, "item/started", &params).await;
+        drop(events_file);
+
+        let lines = std::fs::read_to_string(&path).expect("read");
+        let parsed: serde_json::Value =
+            serde_json::from_str(lines.lines().next().expect("line")).expect("json");
+        assert_eq!(parsed["event_kind"], "tool_exec");
+        assert_eq!(parsed["command"], "ls /root");
+        assert_eq!(parsed["tool_call_id"], "tool-1");
+    }
+
+    #[test]
+    fn turn_completed_from_event_matches_raw_notification() {
+        let params = json!({"threadId": "t1", "turn": {"status": "completed"}});
+        let event = AppServerEvent::RawServerNotification {
+            method: "turn/completed".to_string(),
+            params: Some(params.clone()),
+        };
+        let extracted = turn_completed_from_event(&event).expect("Some");
+        assert_eq!(extracted, params);
+
+        let not_terminal = AppServerEvent::RawServerNotification {
+            method: "turn/started".to_string(),
+            params: None,
+        };
+        assert!(turn_completed_from_event(&not_terminal).is_none());
+    }
 }
