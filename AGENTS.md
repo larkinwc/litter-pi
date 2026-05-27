@@ -13,7 +13,6 @@
 - `apps/ios/Sources/Litter/Bridge/Rust*.swift` — iOS bridge files mapping Swift to the shared Rust layer.
 - `apps/android/core/bridge/.../Rust*.kt` — Android bridge files mapping Kotlin to the shared Rust layer. UniFFI Kotlin sources are generated into `shared/rust-bridge/generated/kotlin/` and consumed directly from there; do not maintain copied binding files under Android source roots.
 - `shared/rust-bridge/pi-server-runner/` is the headless macOS host runner binary that exercises the in-process / SSH pi coding-agent runtime end-to-end without booting iOS. It lives in the `shared/rust-bridge/` workspace so it inherits the same workspace dependency resolution as `codex-mobile-client` and `pi-mobile-client`.
-- `shared/rust-bridge/pi-server-runner/` is the headless macOS host runner binary that exercises the in-process / SSH pi coding-agent runtime end-to-end without booting iOS. It lives in the `shared/rust-bridge/` workspace so it inherits the same workspace dependency resolution as `codex-mobile-client` and `pi-mobile-client`.
 - `shared/third_party/codex/` is the upstream Codex submodule.
 - `apps/ios/GeneratedRust/` contains local generated Rust artifacts for iOS builds: UniFFI headers/modulemap plus raw device/simulator staticlibs. These artifacts are not committed.
 - `apps/ios/Frameworks/` contains downloaded/package-lane iOS XCFrameworks (`codex_mobile_client.xcframework` in package builds and `litter_ish.xcframework`). These artifacts are not committed.
@@ -77,7 +76,7 @@
   - `shared/rust-bridge/pi-mobile-client/`
   - expose new boundary types through `codex-mobile-client` (single UniFFI surface); do not add a parallel mobile crate
 - Add or change the headless pi runner used for host-side debugging and validators:
-  - `services/pi-server-runner/`
+  - `shared/rust-bridge/pi-server-runner/`
   - keep new runner modes (`--local`, `--byok`, `--oauth-paste`, `--remote-ssh`, `--alleycat-pair`, `--inject-drop`) driven by the same shared Rust client the mobile apps use
 
 ## Drift Guardrails
@@ -100,11 +99,16 @@
 - **androidx.security:security-crypto** — encrypted credential storage.
 ### Rust Shared Layer (Cargo)
 - **codex-app-server-protocol**, **codex-app-server-client**, **codex-protocol**, **codex-core** — upstream Codex crates.
-- **pi_agent_rust (forked submodule)** — second coding-agent runtime, vendored at `shared/third_party/pi_agent_rust/` (litter fork); consumed by `shared/rust-bridge/pi-mobile-client/` and `services/pi-server-runner/`.
+- **pi_agent_rust (forked submodule)** — second coding-agent runtime, vendored at `shared/third_party/pi_agent_rust/` (litter fork); consumed by `shared/rust-bridge/pi-mobile-client/` and `shared/rust-bridge/pi-server-runner/`.
 - **tokio-tungstenite** — async WebSocket transport.
 - **russh** — SSH client (shared Rust SSH, replacing platform-native SSH libs).
 - **uniffi** — generates Swift/Kotlin bindings from Rust.
 - **lru**, **base64**, **regex** — utility crates.
+
+## Pi Runtime Conventions
+
+- **`.piCapabilityGate(.voice|.plans, agentRuntimeKind:)`** is the production-side capability filter for pi-runtime-specific surfaces (voice mic/orb/handoff today; reserve `.plans` for plan-update surfaces). Apply at the iOS view body where the gated UI is rendered (`InlineVoiceButton`, `HomeVoiceOrbButton`, `InlineHandoffView`, `homeVoiceLauncher`), and at the Android Compose surface via the `PiCapabilityGates.showsVoice/showsPlans(runtimeKind)` helpers. The `agentRuntimeKind` is the active *thread's* runtime kind first, falling back to the active server's runtime when no thread is selected — never gate purely on the server-level kind, because users can have multiple servers paired and the active turn drives the gate.
+- **DEBUG-only `--ui-test-*` launch-arg ladder**: production app accepts these flags only in `#if DEBUG` builds; release builds ignore them. The current ladder is `--ui-test-conversation-display`, `--ui-test-pi-retry-turn`, `--ui-test-pi-capability-fixture --voice-false|--voice-true`, and `--ui-test-pi-active-runtime-kind <kind>`. When adding a new XCUITest that requires the production surface (not a harness), prefer extending an existing flag rather than introducing a new top-level harness; if a new flag is required, name it `--ui-test-<feature-area>-<knob>` and keep the parsing in `LitterApp.swift` alongside the existing ladder.
 
 ## Fresh Checkout Prerequisites
 Before building on a new machine, verify:
