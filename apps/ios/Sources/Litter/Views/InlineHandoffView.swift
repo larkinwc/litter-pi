@@ -23,7 +23,22 @@ struct InlineHandoffView: View {
         return "\(last.id):\(last.text.count)"
     }
 
+    /// Canonical id of the active thread's agent runtime, used by the
+    /// production `.piCapabilityGate(.voice, ...)` modifier. A pi
+    /// server with `capabilities.voice = false` therefore hides
+    /// `voice.handoff.banner` in the production app, not just the
+    /// XCUITest harness.
+    private var agentRuntimeKind: String? {
+        thread?.agentRuntimeKind
+    }
+
     var body: some View {
+        gatedBody
+            .piCapabilityGate(.voice, agentRuntimeKind: agentRuntimeKind)
+    }
+
+    @ViewBuilder
+    private var gatedBody: some View {
         if thread != nil, !entries.isEmpty {
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {

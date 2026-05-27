@@ -97,4 +97,61 @@ final class PiCapabilityGatesUITests: XCTestCase {
         if app.buttons[identifier].exists { return true }
         return false
     }
+
+    /// Boots the *production* app surface (no `--ui-test-pi-capability-fixture`
+    /// flag) and uses the DEBUG-only
+    /// `--ui-test-pi-active-runtime-kind <kind>` override added in
+    /// `LitterApp.swift::HomeNavigationView.activeServerAgentRuntimeKind`
+    /// to synthesize a pi active-server runtime. This proves the
+    /// production-side wiring of `.piCapabilityGate(.voice, ...)` on
+    /// `HomeVoiceOrbButton` (the `homeVoiceLauncher` overlay), not
+    /// just the harness gate.
+    ///
+    /// Production `InlineVoiceButton` has no caller today
+    /// (`HomeVoiceOrbButton` is the lone home-screen mic surface),
+    /// and `InlineHandoffView` is only rendered from
+    /// `RealtimeVoiceScreen` which requires a live realtime session
+    /// to navigate into. Both surfaces apply `.piCapabilityGate(.voice, ...)`
+    /// internally, so this test asserts the union of identifiers:
+    /// when the active runtime is pi, NONE of the three IDs may
+    /// resolve anywhere in the live app accessibility tree.
+    @MainActor
+    func testProductionAppHidesVoiceAccessibilityIdentifiersWhenActiveRuntimeIsPi() throws {
+        let app = XCUIApplication()
+        app.launchArguments.append("--ui-test-pi-active-runtime-kind")
+        app.launchArguments.append("pi")
+        app.launch()
+
+        // The production app may take a moment to settle past splash
+        // before the home navigation overlay would render the voice
+        // launcher. Polling each identifier for absence covers both
+        // the "never rendered" and "rendered then removed" paths.
+        // Give the production app a few seconds to finish splash + home
+        // dashboard render. We poll for *absence* using direct
+        // `.exists` (not `waitForExistence`) so the test does not pay
+        // the timeout cost for every identifier.
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            if !directlyExists(in: app, identifier: "voice.mic.button")
+                && !directlyExists(in: app, identifier: "voice.settings.row")
+                && !directlyExists(in: app, identifier: "voice.handoff.banner") {
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+
+        for identifier in ["voice.mic.button", "voice.settings.row", "voice.handoff.banner"] {
+            XCTAssertFalse(
+                directlyExists(in: app, identifier: identifier),
+                "Production app must NOT render \(identifier) when active runtime is pi"
+            )
+        }
+    }
+
+    private func directlyExists(in app: XCUIApplication, identifier: String) -> Bool {
+        if app.otherElements[identifier].exists { return true }
+        if app.staticTexts[identifier].exists { return true }
+        if app.buttons[identifier].exists { return true }
+        return false
+    }
 }

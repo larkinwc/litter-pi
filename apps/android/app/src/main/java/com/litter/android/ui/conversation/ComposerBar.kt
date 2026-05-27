@@ -963,8 +963,24 @@ fun ComposerBar(
                         val voiceSnapshot by appModel.snapshot.collectAsState()
                         val voicePhase = voiceSnapshot?.voiceSession?.phase
                         val voiceInputLevel = voiceSession?.inputLevel ?: 0f
+                        // Production capability gate parity with iOS
+                        // `PiCapabilityGates.showsVoice(for:)`: the
+                        // inline voice mic is hidden when the active
+                        // thread's runtime advertises `voice = false`
+                        // (today: pi). Pulled from the same Rust
+                        // snapshot the harness uses so the production
+                        // call site cannot silently re-enable voice
+                        // for pi servers.
+                        val activeThreadRuntime = voiceSnapshot
+                            ?.threads
+                            ?.firstOrNull { it.key == threadKey }
+                            ?.agentRuntimeKind
+                        val piVoiceVisible =
+                            com.litter.android.ui.PiCapabilityGates
+                                .showsVoice(activeThreadRuntime)
 
-                        if (realtimeAvailable && text.isEmpty() && attachedImage == null && attachedFiles.isEmpty()) {
+                        if (piVoiceVisible &&
+                            realtimeAvailable && text.isEmpty() && attachedImage == null && attachedFiles.isEmpty()) {
                             Spacer(Modifier.width(8.dp))
                             com.litter.android.ui.voice.InlineVoiceButton(
                                 phase = voicePhase,

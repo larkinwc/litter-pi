@@ -278,6 +278,39 @@ always read the manifest record. The validators specifically check that
 when `voice = false` is reported, iOS hides `voice.mic.button`,
 `voice.settings.row`, and `voice.handoff.banner` (VAL-NFR-005).
 
+### Production-enforced gating
+
+Capability gating is now enforced at the **production** mobile call
+sites, not just inside the XCUITest fixture harness:
+
+* iOS production surfaces apply `.piCapabilityGate(.voice, agentRuntimeKind:)`
+  directly on `InlineVoiceButton`, `HomeVoiceOrbButton`, the
+  `homeVoiceLauncher` overlay rendered by `HomeNavigationView`, and
+  the `InlineHandoffView` banner used by `RealtimeVoiceScreen`. The
+  runtime kind passed into the gate is resolved from the active
+  thread (via `AppModel.snapshot.threadSnapshot(for:).agentRuntimeKind`)
+  with a fallback to the home dashboard's currently selected
+  server's first available agent runtime — the same observation the
+  harness exercises end-to-end. The XCUITest
+  `apps/ios/Tests/LitterUITests/PiCapabilityGatesUITests.swift`
+  contains a third case
+  (`testProductionAppHidesVoiceAccessibilityIdentifiersWhenActiveRuntimeIsPi`)
+  that boots the production app surface with
+  `--ui-test-pi-active-runtime-kind pi` (DEBUG-only override) and
+  asserts none of the three voice accessibility identifiers
+  resolve.
+* Android Compose production surfaces use the same string-based
+  decision helper (`PiCapabilityGates.showsVoice(agentRuntimeKind:)`
+  in `ui/PiCapabilityGates.kt`). The composer call site in
+  `ui/conversation/ComposerBar.kt` consults the helper before
+  rendering `InlineVoiceButton`, mirroring the iOS gate. Host-side
+  parity is pinned by
+  `apps/android/app/src/test/java/com/litter/android/ui/PiCapabilityGatesDecisionTest.kt`,
+  following the same pattern as
+  `RetryTurnRowDecisionTest.kt`. The full Compose
+  instrumentation test remains deferred per the Android UI deferral
+  documented in `apps/android/docs/qa-matrix.md`.
+
 ## Voice is out of scope
 
 Realtime voice is intentionally out of scope for the pi runtime in this

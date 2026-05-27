@@ -30,6 +30,28 @@ object PiCapabilityGates {
             AlleycatAgentRuntimeKind.PI -> false
             else -> true
         }
+
+    /**
+     * Returns `true` when the supplied [agentRuntimeKind] identifies a
+     * pi server. Matches the canonical id used by
+     * `AgentRuntimeKind::Pi` (serde rename: `"pi"`). Null and empty
+     * inputs default to non-pi so cold-start UI does not flicker.
+     */
+    fun isPiRuntime(agentRuntimeKind: String?): Boolean =
+        agentRuntimeKind?.trim()?.lowercase() == "pi"
+
+    /**
+     * String-based parity check mirroring iOS
+     * `PiCapabilityGates.showsVoice(for:)`. Used by Compose call
+     * sites that already have the runtime id as a string via the
+     * shared Rust snapshot (e.g. `AppThreadSnapshot.agentRuntimeKind`).
+     */
+    fun showsVoice(agentRuntimeKind: String?): Boolean =
+        !isPiRuntime(agentRuntimeKind)
+
+    /** String-based parity check mirroring iOS `PiCapabilityGates.showsPlans(for:)`. */
+    fun showsPlans(agentRuntimeKind: String?): Boolean =
+        !isPiRuntime(agentRuntimeKind)
 }
 
 /**

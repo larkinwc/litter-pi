@@ -8,6 +8,13 @@ struct HomeVoiceOrbButton: View {
     let isAvailable: Bool
     let isStarting: Bool
     let action: () -> Void
+    /// Canonical id of the active server's agent runtime. When this
+    /// matches the pi runtime (`PiCapabilityGates.isPiRuntime`) the
+    /// `.piCapabilityGate(.voice, ...)` modifier collapses the entire
+    /// orb so a pi server with `capabilities.voice = false` actually
+    /// hides `voice.mic.button` in the production app, not just in
+    /// the XCUITest harness.
+    var agentRuntimeKind: String? = nil
 
     private let buttonSize: CGFloat = 44
 
@@ -86,5 +93,6 @@ struct HomeVoiceOrbButton: View {
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint("Starts a local realtime voice conversation.")
         .coachmarkAnchor(.voice)
+        .piCapabilityGate(.voice, agentRuntimeKind: agentRuntimeKind)
     }
 }
