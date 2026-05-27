@@ -20,11 +20,18 @@ use std::fs;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use ish_embed_host::IshInstance;
 
 use crate::ish_types::IshBootstrapError;
+
+#[derive(Debug)]
+struct BootstrapPaths {
+    bundle_fs: PathBuf,
+    application_support: PathBuf,
+    documents: PathBuf,
+}
 
 // Numeric error codes preserved for back-compat with the previous `ish` crate
 // surface. The Swift side observes these as negative `Int32` values.
@@ -51,6 +58,19 @@ impl From<ish_embed_host::IshError> for IshBootstrapError {
 }
 
 static INSTANCE: OnceLock<IshInstance> = OnceLock::new();
+/// Paths captured by `prepare()`. The kernel itself is not booted until the
+/// first call into `run()` / `run_streaming()` (or the explicit
+/// `ensure_booted()` helper) so that host-process launch is not coupled to
+/// iSH startup. See `library/litter-ish-compatibility.md` for the upstream
+/// vdso bug that makes eager boot fatal on iOS 26.x simulators.
+static PREPARED_PATHS: OnceLock<BootstrapPaths> = OnceLock::new();
+/// Serializes lazy boot attempts and remembers the most recent boot
+/// outcome so concurrent callers see a consistent error.
+static BOOT_RESULT: OnceLock<Mutex<Option<Result<(), IshBootstrapError>>>> = OnceLock::new();
+
+fn boot_lock() -> &'static Mutex<Option<Result<(), IshBootstrapError>>> {
+    BOOT_RESULT.get_or_init(|| Mutex::new(None))
+}
 
 pub(crate) fn instance() -> Option<&'static IshInstance> {
     INSTANCE.get()
@@ -65,6 +85,33 @@ pub(crate) async fn instance_or_wait(timeout: std::time::Duration) -> Option<&'s
     if let Some(instance) = INSTANCE.get() {
         return Some(instance);
     }
+    // First, try to boot lazily on a blocking thread so this async caller
+    // does not stall the runtime during rootfs extraction / kernel boot.
+    if PREPARED_PATHS.get().is_some() {
+        let deadline = std::time::Instant::now() + timeout;
+        let join = tokio::task::spawn_blocking(ensure_booted);
+        match tokio::time::timeout(timeout, join).await {
+            Ok(Ok(Ok(()))) => return INSTANCE.get(),
+            Ok(Ok(Err(err))) => {
+                eprintln!("[ish] lazy boot failed: {err}");
+            }
+            Ok(Err(err)) => {
+                eprintln!("[ish] lazy boot join error: {err}");
+            }
+            Err(_) => {
+                eprintln!("[ish] lazy boot timed out after {:?}", timeout);
+            }
+        }
+        // Fall through and poll INSTANCE in case a concurrent boot finishes.
+        let poll = std::time::Duration::from_millis(100);
+        while std::time::Instant::now() < deadline {
+            tokio::time::sleep(poll).await;
+            if let Some(instance) = INSTANCE.get() {
+                return Some(instance);
+            }
+        }
+        return None;
+    }
     let deadline = std::time::Instant::now() + timeout;
     let poll = std::time::Duration::from_millis(100);
     while std::time::Instant::now() < deadline {
@@ -76,27 +123,82 @@ pub(crate) async fn instance_or_wait(timeout: std::time::Duration) -> Option<&'s
     None
 }
 
-/// One-time iSH boot. Mirrors `codex_ish_init` + the post-init setup calls in
-/// IshBridge.m. After this returns `Ok`, `run()` is safe to call and the
-/// codex_core exec hook has been installed.
+/// Record the iSH bootstrap paths without booting the kernel. The kernel
+/// boot is deferred to the first `run()` / `run_streaming()` / explicit
+/// `ensure_booted()` call so that host-app launch does not depend on a
+/// working iSH kernel — see `library/litter-ish-compatibility.md` for the
+/// upstream `invalid vdso` crash on iOS 26.x simulators that this defers.
+///
+/// On iOS device builds this still completes well before a tool call runs,
+/// because the first tool invocation triggers `ensure_booted()` via the
+/// codex-core exec hook. The bookkeeping side-effects below (publishing
+/// paths, installing the exec hook) remain synchronous so that callers see
+/// the hook registered before they fire their first command.
 ///
 /// * `bundle_fs_path` — absolute path to the `fs` directory inside the app
 ///   bundle (Swift resolves this via `Bundle.main.url(forResource:"fs", …)`).
 /// * `application_support_dir` — Application Support dir for the app; the
 ///   rootfs lives under `<application_support_dir>/fs/`.
 /// * `documents_dir` — the app's Documents directory; `Apps/` inside it is
-///   bind-mounted at `/mnt/apps` inside the fakefs.
+///   bind-mounted at `/mnt/apps` inside the fakefs on first boot.
 pub fn bootstrap(
     bundle_fs_path: &Path,
     application_support_dir: &Path,
     documents_dir: &Path,
 ) -> Result<(), IshBootstrapError> {
-    if INSTANCE.get().is_some() {
+    if PREPARED_PATHS.get().is_some() {
         return Err(IshBootstrapError::AlreadyBootstrapped);
     }
 
-    let dest = application_support_dir.join("fs");
-    extract_rootfs_if_needed(bundle_fs_path, &dest)?;
+    PREPARED_PATHS
+        .set(BootstrapPaths {
+            bundle_fs: bundle_fs_path.to_path_buf(),
+            application_support: application_support_dir.to_path_buf(),
+            documents: documents_dir.to_path_buf(),
+        })
+        .map_err(|_| IshBootstrapError::AlreadyBootstrapped)?;
+
+    // Install the codex-core exec hook eagerly so that the first hook
+    // invocation can fault the kernel in lazily. `crate::ish_exec::install`
+    // is idempotent via its own `OnceLock`.
+    crate::ish_exec::install();
+
+    eprintln!("[ish] bootstrap paths recorded; kernel boot deferred until first tool exec");
+    Ok(())
+}
+
+/// Boot the kernel on demand. Idempotent and thread-safe — concurrent
+/// callers serialize on `BOOT_RESULT` and observe the same `Result`.
+pub(crate) fn ensure_booted() -> Result<(), IshBootstrapError> {
+    if INSTANCE.get().is_some() {
+        return Ok(());
+    }
+    let lock = boot_lock();
+    let mut guard = lock
+        .lock()
+        .map_err(|err| IshBootstrapError::Ish(format!("ish boot mutex poisoned: {err}")))?;
+    if INSTANCE.get().is_some() {
+        return Ok(());
+    }
+    if let Some(prev) = guard.as_ref() {
+        return prev.clone();
+    }
+
+    let outcome = match boot_now() {
+        Ok(()) => Ok(()),
+        Err(err) => Err(err),
+    };
+    *guard = Some(outcome.clone());
+    outcome
+}
+
+fn boot_now() -> Result<(), IshBootstrapError> {
+    let paths = PREPARED_PATHS
+        .get()
+        .ok_or_else(|| IshBootstrapError::Ish("ish bootstrap not configured".to_string()))?;
+
+    let dest = paths.application_support.join("fs");
+    extract_rootfs_if_needed(&paths.bundle_fs, &dest)?;
 
     let meta_db = dest.join("meta.db");
     if meta_db.exists() {
@@ -119,14 +221,9 @@ pub fn bootstrap(
         .set(instance)
         .map_err(|_| IshBootstrapError::AlreadyBootstrapped)?;
 
-    // Now that INSTANCE is published, the post-init setup goes through the
-    // normal run() path, which takes the shared lock and honors the same
-    // ordering guarantees as regular command dispatch.
     runtime_setup();
     write_resolv_conf();
-    mount_apps_dir(documents_dir);
-
-    crate::ish_exec::install();
+    mount_apps_dir(&paths.documents);
 
     Ok(())
 }
@@ -156,9 +253,21 @@ pub fn run_streaming<F>(
 where
     F: FnMut(&[u8]),
 {
-    let Some(instance) = INSTANCE.get() else {
-        eprintln!("[ish] run() called before bootstrap succeeded");
-        return (ISH_E_NOT_RUNNING, Vec::new());
+    let instance = match INSTANCE.get() {
+        Some(instance) => instance,
+        None => {
+            if let Err(err) = ensure_booted() {
+                eprintln!("[ish] run() lazy boot failed: {err}");
+                return (ISH_E_NOT_RUNNING, Vec::new());
+            }
+            match INSTANCE.get() {
+                Some(instance) => instance,
+                None => {
+                    eprintln!("[ish] run() called before bootstrap succeeded");
+                    return (ISH_E_NOT_RUNNING, Vec::new());
+                }
+            }
+        }
     };
 
     // The previous embed library funnelled every command through a single

@@ -7,6 +7,8 @@ members = [
     "codex-mobile-client",
     "uniffi-bindgen",
     "codex-tui",
+    "pi-mobile-client",
+    "pi-server-runner",
 ]
 resolver = "3"
 
@@ -45,7 +47,7 @@ base64 = "0.22"
 sha2 = "0.10"
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
-russh = "0.60.1"
+russh = "0.61.0"
 russh-keys = "0.49.2"
 futures = "0.3"
 url = "2.5"
@@ -89,6 +91,11 @@ codegen-units = 16
 tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "132f5b39c862e3a970f731d709608b3e6276d5f6" }
 tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "9200079d3b54a1ff51072e24d81fd354f085156f" }
 crossterm = { git = "https://github.com/nornagon/crossterm", branch = "nornagon/color-query" }
+# Vendored asupersync 0.3.2 + minimal reactor cfg patches that add
+# target_os = "ios" to the kqueue gate and target_os = "android" to the
+# epoll gate. See library/runtime-topology.md for the rationale and
+# upstream PR plan.
+asupersync = { path = "../third_party/asupersync" }
 
 [patch."ssh://git@github.com/openai-oss-forks/tungstenite-rs.git"]
 tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "9200079d3b54a1ff51072e24d81fd354f085156f" }

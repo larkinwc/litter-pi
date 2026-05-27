@@ -1,0 +1,22 @@
+[package]
+name = "pi-mobile-client"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+pi_agent_rust = { path = "../../third_party/pi_agent_rust", default-features = false, features = ["js-extensions"] }
+asupersync = { version = "=0.3.2", default-features = false, features = ["tls-native-roots", "test-internals"] }
+tokio = { workspace = true }
+futures = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+serial_test = "3"

@@ -1,0 +1,70 @@
+name: CI (Rust Mobile)
+
+on:
+  pull_request:
+    paths:
+      - 'Makefile'
+      - '.gitmodules'
+      - 'apps/ios/scripts/**'
+      - 'patches/codex/**'
+      - 'services/**'
+      - 'shared/rust-bridge/**'
+      - 'shared/third_party/codex/**'
+      - '.github/workflows/ci-rust-mobile.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'Makefile'
+      - '.gitmodules'
+      - 'apps/ios/scripts/**'
+      - 'patches/codex/**'
+      - 'services/**'
+      - 'shared/rust-bridge/**'
+      - 'shared/third_party/codex/**'
+      - '.github/workflows/ci-rust-mobile.yml'
+
+concurrency:
+  group: ci-rust-mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-mobile:
+    name: rust-check / rust-test / ios-sim-fast (rust)
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Lint workflow with actionlint
+        uses: raven-actions/actionlint@v2
+        with:
+          files: .github/workflows/ci-rust-mobile.yml
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: aarch64-apple-ios-sim
+
+      - name: Sync codex submodule
+        run: ./apps/ios/scripts/sync-codex.sh --preserve-current
+
+      - name: Cargo check (shared Rust mobile crates)
+        run: make rust-check
+
+      - name: Cargo test (shared Rust mobile crates)
+        run: make rust-test
+
+      - name: Clippy (pi crates, deny warnings)
+        run: cargo clippy --manifest-path shared/rust-bridge/Cargo.toml -p pi-mobile-client -p pi-server-runner -- -D warnings
+
+      - name: Build iOS simulator (fast lane)
+        run: make ios-sim-fast

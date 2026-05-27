@@ -28,6 +28,10 @@ mod detect;
 mod exec;
 mod forwarding;
 mod keychain;
+mod pi_binary;
+pub mod pi_bootstrap;
+#[cfg(test)]
+mod pi_reconnect;
 mod port_forward;
 mod probes;
 mod resolve_binary;
@@ -62,7 +66,14 @@ pub(crate) use types::{RemoteShell, SshBootstrapTransport};
 
 // SSH channel sizing — tuned for high-throughput interactive workloads.
 const SSH_CHANNEL_WINDOW_SIZE: u32 = 16 * 1024 * 1024;
-const SSH_MAX_PACKET_SIZE: u32 = 256 * 1024;
+// SSH max packet size must be <= 65535 to satisfy russh's TCP segment cap.
+// Larger values (we previously used 256 KB) trigger a `packet size > 65535`
+// warning from russh and have been correlated with mid-frame fragmentation
+// of the pi acp JSON-RPC stream on the SSH exec channel. Cap at 32 KB which
+// is well under russh's limit, comfortably above one MTU, and large enough
+// that initialize/session/* responses still travel in a small number of
+// data events.
+const SSH_MAX_PACKET_SIZE: u32 = 32 * 1024;
 const SSH_CHANNEL_BUFFER_SIZE: usize = 512;
 
 // Connection lifecycle timings.

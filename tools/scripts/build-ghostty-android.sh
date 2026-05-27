@@ -23,10 +23,42 @@ fi
 # Makefile's STAMP_SYNC_GHOSTTY dep chain.
 "$REPO_DIR/apps/ios/scripts/sync-ghostty.sh" --preserve-current
 
-if ! command -v zig >/dev/null 2>&1; then
-    echo "error: zig is required to build Ghostty (brew install zig)" >&2
+# Ghostty's pinned build.zig requires zig <= 0.15.x. If the host `zig` is newer
+# (e.g. 0.16.0 from `brew install zig`), prefer the brewed `zig@0.15` keg.
+# Fast-fail (<100ms) with a clear error if no compatible zig is available.
+ensure_zig_0_15() {
+    local zig_path zig_version major minor candidate
+    local -a candidates=(
+        /opt/homebrew/opt/zig@0.15/bin
+        /usr/local/opt/zig@0.15/bin
+    )
+
+    zig_path="$(command -v zig 2>/dev/null || true)"
+    if [ -n "$zig_path" ]; then
+        zig_version="$("$zig_path" version 2>/dev/null | head -n 1 || true)"
+        major="${zig_version%%.*}"
+        minor="${zig_version#*.}"
+        minor="${minor%%.*}"
+        if [ -n "$major" ] && [ -n "$minor" ] \
+            && [ "$major" -eq 0 ] && [ "$minor" -le 15 ] 2>/dev/null; then
+            return 0
+        fi
+        echo "==> Host zig is $zig_version; Ghostty pins require zig <= 0.15.x. Looking for brewed zig@0.15..." >&2
+    fi
+
+    for candidate in "${candidates[@]}"; do
+        if [ -x "$candidate/zig" ]; then
+            export PATH="$candidate:$PATH"
+            echo "==> Using $candidate/zig ($("$candidate/zig" version | head -n 1))" >&2
+            return 0
+        fi
+    done
+
+    echo "error: zig <= 0.15.x is required to build Ghostty (brew install zig@0.15)" >&2
     exit 1
-fi
+}
+
+ensure_zig_0_15
 
 if ! grep -q 'ghostty_surface_write' "$GHOSTTY_DIR/include/ghostty.h"; then
     echo "error: Ghostty header shape changed; expected external PTY ghostty_surface_write in include/ghostty.h" >&2

@@ -1,0 +1,435 @@
+import AuthenticationServices
+import SwiftUI
+import UIKit
+
+/// SwiftUI surface for the Anthropic OAuth (Claude Code) sign-in flow.
+///
+/// The Authorization Code + PKCE handshake itself is owned by the
+/// shared Rust driver `pi_mobile_client::auth::anthropic_oauth`. This
+/// sheet drives the iOS-specific pieces:
+///
+/// 1. Asks the Rust driver for an authorize URL + PKCE verifier (via
+///    `AnthropicOAuthAuthorizeProvider`).
+/// 2. Opens the URL in `ASWebAuthenticationSession` with
+///    `callbackURLScheme = "litter"` so Anthropic's redirect to
+///    `litter://oauth/pi/anthropic?code=...` is funnelled back through
+///    the system auth session rather than an embedded `WKWebView`
+///    (which Anthropic's consent screen blocks).
+/// 3. Forwards the returned `code` to the Rust driver via the supplied
+///    `AnthropicOAuthCompleter`. The Rust side persists the OAuth
+///    credential into pi's `auth.json`; this Swift layer additionally
+///    mirrors the refresh token into the iOS Keychain through
+///    `AnthropicOAuthBridge` so VAL-AUTH-004's grep contract holds.
+///
+/// The view model is intentionally injectable so unit tests can
+/// observe the state machine without touching `Security` or
+/// `AuthenticationServices` (both of which crash when invoked in a
+/// non-UI XCTest target).
+@MainActor
+struct AnthropicOAuthSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var model: AnthropicOAuthSheetModel
+
+    var onCompletion: (Result) -> Void
+
+    init(
+        model: AnthropicOAuthSheetModel? = nil,
+        onCompletion: @escaping (Result) -> Void = { _ in }
+    ) {
+        let resolved = model ?? AnthropicOAuthSheetModel()
+        _model = StateObject(wrappedValue: resolved)
+        self.onCompletion = onCompletion
+    }
+
+    enum Result {
+        case cancelled
+        case signedIn(refreshTokenStored: Bool)
+        case failed(String)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                LitterTheme.backgroundGradient.ignoresSafeArea()
+                VStack(spacing: 16) {
+                    Image(systemName: "key.horizontal.fill")
+                        .font(.system(size: 36))
+                        .foregroundColor(LitterTheme.accent)
+                    Text("Sign in with Anthropic")
+                        .litterFont(.title3)
+                        .foregroundColor(LitterTheme.textPrimary)
+                    Text(model.descriptionText)
+                        .litterFont(.footnote)
+                        .foregroundColor(LitterTheme.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+
+                    Button {
+                        Task { await runFlow() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if model.isInFlight {
+                                ProgressView()
+                                    .progressViewStyle(.circular)
+                                    .tint(LitterTheme.accent)
+                            } else {
+                                Image(systemName: "globe")
+                                    .foregroundColor(LitterTheme.accent)
+                            }
+                            Text(model.actionButtonTitle)
+                                .litterFont(.subheadline)
+                                .foregroundColor(LitterTheme.accent)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(LitterTheme.surface.opacity(0.6))
+                        .clipShape(Capsule())
+                    }
+                    .disabled(model.isInFlight)
+
+                    if let status = model.statusMessage {
+                        Text(status)
+                            .litterFont(.caption)
+                            .foregroundColor(LitterTheme.textMuted)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                    }
+                    Spacer()
+                }
+                .padding(.top, 36)
+            }
+            .navigationTitle("Anthropic OAuth")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close") {
+                        onCompletion(.cancelled)
+                        dismiss()
+                    }
+                    .foregroundColor(LitterTheme.accent)
+                }
+            }
+        }
+    }
+
+    private func runFlow() async {
+        let result = await model.beginAuthorization()
+        onCompletion(result)
+        if case .signedIn = result {
+            dismiss()
+        }
+    }
+}
+
+// MARK: - View model
+
+/// Observable model backing `AnthropicOAuthSheet`. Owns the
+/// `ASWebAuthenticationSession` lifecycle and the Keychain mirror.
+@MainActor
+final class AnthropicOAuthSheetModel: ObservableObject {
+    @Published private(set) var isInFlight: Bool = false
+    @Published private(set) var statusMessage: String?
+
+    let descriptionText: String = "Anthropic's consent screen opens in a secure system browser. Sign in with your Claude Code account; Litter never sees your password."
+    var actionButtonTitle: String {
+        isInFlight ? "Opening browser…" : "Continue with Anthropic"
+    }
+
+    private let authorizeProvider: AnthropicOAuthAuthorizeProvider
+    private let webAuthSessionFactory: AnthropicOAuthWebAuthSessionFactory
+    private let completer: AnthropicOAuthCompleter
+    private let keychainPersister: (String) throws -> Void
+
+    init(
+        authorizeProvider: AnthropicOAuthAuthorizeProvider? = nil,
+        webAuthSessionFactory: AnthropicOAuthWebAuthSessionFactory? = nil,
+        completer: AnthropicOAuthCompleter? = nil,
+        keychainPersister: ((String) throws -> Void)? = nil
+    ) {
+        self.authorizeProvider = authorizeProvider ?? DefaultAnthropicOAuthAuthorizeProvider()
+        self.webAuthSessionFactory = webAuthSessionFactory ?? DefaultAnthropicOAuthWebAuthSessionFactory()
+        self.completer = completer ?? DefaultAnthropicOAuthCompleter()
+        self.keychainPersister = keychainPersister ?? { token in
+            try AnthropicOAuthBridge.persistRefreshToken(token)
+        }
+    }
+
+    /// Drive the full Authorization Code + PKCE flow. Surfaces a
+    /// `AnthropicOAuthSheet.Result` for the caller's completion
+    /// callback. Marked `internal` so the XCTest can assert the
+    /// state machine without going through SwiftUI.
+    func beginAuthorization() async -> AnthropicOAuthSheet.Result {
+        guard !isInFlight else {
+            return .failed("Sign-in already in progress.")
+        }
+        isInFlight = true
+        statusMessage = nil
+        defer { isInFlight = false }
+
+        let handshake: AnthropicOAuthHandshake
+        do {
+            handshake = try await authorizeProvider.beginAuthorization()
+        } catch {
+            let message = "Could not start sign-in: \(error.localizedDescription)"
+            statusMessage = message
+            return .failed(message)
+        }
+
+        let callbackURL: URL
+        do {
+            callbackURL = try await webAuthSessionFactory.run(
+                authorizeURL: handshake.authorizeURL,
+                callbackURLScheme: AnthropicOAuthBridge.callbackURLScheme
+            )
+        } catch let error as AnthropicOAuthWebAuthError {
+            if case .cancelled = error {
+                statusMessage = "Sign-in cancelled."
+                return .cancelled
+            }
+            let message = "Sign-in failed: \(error.localizedDescription)"
+            statusMessage = message
+            return .failed(message)
+        } catch {
+            let message = "Sign-in failed: \(error.localizedDescription)"
+            statusMessage = message
+            return .failed(message)
+        }
+
+        let code: String
+        do {
+            code = try Self.extractAuthorizationCode(from: callbackURL)
+        } catch {
+            let message = "Sign-in returned an unexpected callback: \(error.localizedDescription)"
+            statusMessage = message
+            return .failed(message)
+        }
+
+        let completion: AnthropicOAuthCompletion
+        do {
+            completion = try await completer.complete(
+                code: code,
+                verifier: handshake.verifier
+            )
+        } catch {
+            let message = "Anthropic rejected the sign-in: \(error.localizedDescription)"
+            statusMessage = message
+            return .failed(message)
+        }
+
+        var keychainStored = false
+        if let refreshToken = completion.refreshToken {
+            do {
+                try keychainPersister(refreshToken)
+                keychainStored = true
+            } catch {
+                statusMessage = "Signed in, but failed to store the refresh token securely."
+                return .failed(error.localizedDescription)
+            }
+        }
+
+        statusMessage = "Signed in with Anthropic."
+        return .signedIn(refreshTokenStored: keychainStored)
+    }
+
+    /// Pull the `code` query item out of the OAuth redirect URL. The
+    /// helper is `static` so the test can exercise the parser without
+    /// instantiating the view model.
+    static func extractAuthorizationCode(from url: URL) throws -> String {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            throw AnthropicOAuthError.invalidCallbackURL
+        }
+        if let error = components.queryItems?.first(where: { $0.name == "error" })?.value {
+            throw AnthropicOAuthError.providerError(error)
+        }
+        guard let code = components.queryItems?.first(where: { $0.name == "code" })?.value,
+              !code.isEmpty else {
+            throw AnthropicOAuthError.missingCode
+        }
+        return code
+    }
+}
+
+// MARK: - Collaborators
+
+enum AnthropicOAuthError: Error, LocalizedError {
+    case invalidCallbackURL
+    case missingCode
+    case providerError(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidCallbackURL:
+            return "The OAuth callback URL could not be parsed."
+        case .missingCode:
+            return "The OAuth callback did not include an authorization code."
+        case .providerError(let message):
+            return "Anthropic reported: \(message)"
+        }
+    }
+}
+
+/// Handshake values returned by the Rust auth driver's `begin` call.
+struct AnthropicOAuthHandshake {
+    let authorizeURL: URL
+    let verifier: String
+}
+
+struct AnthropicOAuthCompletion {
+    let refreshToken: String?
+}
+
+protocol AnthropicOAuthAuthorizeProvider {
+    func beginAuthorization() async throws -> AnthropicOAuthHandshake
+}
+
+protocol AnthropicOAuthCompleter {
+    func complete(code: String, verifier: String) async throws -> AnthropicOAuthCompletion
+}
+
+enum AnthropicOAuthWebAuthError: Error, LocalizedError {
+    case cancelled
+    case unableToStartSession
+    case missingCallbackURL
+    case underlying(Error)
+
+    var errorDescription: String? {
+        switch self {
+        case .cancelled:
+            return "The user cancelled sign-in."
+        case .unableToStartSession:
+            return "Could not start the system auth session."
+        case .missingCallbackURL:
+            return "The auth session ended without a callback URL."
+        case .underlying(let error):
+            return error.localizedDescription
+        }
+    }
+}
+
+protocol AnthropicOAuthWebAuthSessionFactory {
+    func run(authorizeURL: URL, callbackURLScheme: String) async throws -> URL
+}
+
+// MARK: - Default implementations
+
+/// Default implementation of the authorize step.
+///
+/// Delegates to the shared Rust driver via the UniFFI free function
+/// `piAnthropicOauthBegin` (generated from
+/// `codex_mobile_client::auth_uniffi`). The Rust side owns PKCE
+/// verifier generation and stashes it in a process-global slot so the
+/// matching `piAnthropicOauthComplete` call can pick it back up; the
+/// Swift handshake therefore carries an empty `verifier` string — it
+/// is unused by `DefaultAnthropicOAuthCompleter` because the verifier
+/// never crosses the FFI boundary.
+struct DefaultAnthropicOAuthAuthorizeProvider: AnthropicOAuthAuthorizeProvider {
+    func beginAuthorization() async throws -> AnthropicOAuthHandshake {
+        let config = AnthropicOAuthConfig(
+            clientId: nil,
+            clientSecret: nil,
+            authPath: nil
+        )
+        let urlString = try piAnthropicOauthBegin(config: config)
+        guard let url = URL(string: urlString) else {
+            throw AnthropicOAuthError.invalidCallbackURL
+        }
+        // Rust owns the PKCE verifier; surface an empty string so the
+        // existing model code keeps the same shape without leaking the
+        // secret across the FFI boundary.
+        return AnthropicOAuthHandshake(authorizeURL: url, verifier: "")
+    }
+}
+
+/// Default token-exchange step. Forwards the redirect `code` to
+/// `piAnthropicOauthComplete`, which reuses the in-process PKCE
+/// verifier captured by `piAnthropicOauthBegin` and persists the
+/// resulting credential into pi's `auth.json` via `AuthStorage`. The
+/// Rust driver surfaces the raw OAuth refresh token only on the
+/// `Authorized{source: .oauth}` variant of `AuthState`; we pull it
+/// off here so the platform Keychain mirror at the call site can
+/// persist it. BYOK / non-OAuth completions surface `nil` so the
+/// keychain write is skipped for API-key credentials.
+struct DefaultAnthropicOAuthCompleter: AnthropicOAuthCompleter {
+    func complete(code: String, verifier: String) async throws -> AnthropicOAuthCompletion {
+        // The Rust driver pulls the verifier from its in-process slot,
+        // so Swift does not need to forward it.
+        _ = verifier
+        let config = AnthropicOAuthConfig(
+            clientId: nil,
+            clientSecret: nil,
+            authPath: nil
+        )
+        let state = try piAnthropicOauthComplete(config: config, code: code)
+        switch state {
+        case let .authorized(source, refreshToken):
+            // Mirror the refresh token only for the OAuth source.
+            // BYOK credentials never carry a refresh token across the
+            // FFI boundary (the Rust driver pins `refresh_token = nil`
+            // on the `.byok` arm).
+            guard case .oauth = source else {
+                return AnthropicOAuthCompletion(refreshToken: nil)
+            }
+            return AnthropicOAuthCompletion(refreshToken: refreshToken)
+        case .unauthenticated, .authorizing:
+            return AnthropicOAuthCompletion(refreshToken: nil)
+        case let .failed(reason):
+            throw AnthropicOAuthError.providerError(reason)
+        }
+    }
+}
+
+/// Default `ASWebAuthenticationSession` driver. Lives outside the
+/// model so XCTest can swap it out — instantiating
+/// `ASWebAuthenticationSession` in a unit-test target crashes because
+/// it requires an attached `UIScene`.
+final class DefaultAnthropicOAuthWebAuthSessionFactory: NSObject, AnthropicOAuthWebAuthSessionFactory, ASWebAuthenticationPresentationContextProviding {
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        if let window = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)
+        {
+            return window
+        }
+        return ASPresentationAnchor()
+    }
+
+    func run(authorizeURL: URL, callbackURLScheme: String) async throws -> URL {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
+            let session = ASWebAuthenticationSession(
+                url: authorizeURL,
+                callbackURLScheme: callbackURLScheme
+            ) { callbackURL, error in
+                if let error = error as? ASWebAuthenticationSessionError,
+                   error.code == .canceledLogin {
+                    continuation.resume(throwing: AnthropicOAuthWebAuthError.cancelled)
+                    return
+                }
+                if let error {
+                    continuation.resume(
+                        throwing: AnthropicOAuthWebAuthError.underlying(error)
+                    )
+                    return
+                }
+                guard let callbackURL else {
+                    continuation.resume(
+                        throwing: AnthropicOAuthWebAuthError.missingCallbackURL
+                    )
+                    return
+                }
+                continuation.resume(returning: callbackURL)
+            }
+            session.presentationContextProvider = self
+            session.prefersEphemeralWebBrowserSession = false
+            if !session.start() {
+                continuation.resume(
+                    throwing: AnthropicOAuthWebAuthError.unableToStartSession
+                )
+            }
+        }
+    }
+}
+
+#Preview {
+    AnthropicOAuthSheet()
+}

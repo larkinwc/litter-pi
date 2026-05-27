@@ -37,6 +37,11 @@ FAST_MACABI=0
 FORCE_BINDINGS=0
 SKIP_BINDINGS=0
 CARGO_FEATURES=""
+# Comma-separated cargo features list to forward to
+# generate-bindings.sh so the generated Swift/Kotlin surfaces include
+# feature-gated symbols (e.g. `test-injection`). Mirrors CARGO_FEATURES
+# but only the feature list, not the `--features` flag.
+BINDINGS_FEATURE_LIST=""
 PROFILE="release"
 CARGO_PROFILE_FLAG="--release"
 IOS_RUST_PROFILE="${IOS_RUST_PROFILE:-release}"
@@ -103,8 +108,28 @@ for arg in "$@"; do
     --rpc-trace)
       CARGO_FEATURES="--features rpc-trace"
       ;;
+    --test-injection)
+      # Opt-in for XCTest builds that need
+      # `AppClient.connect_local_pi_byok_with_ish_exec` +
+      # `AppClient.pi_active_base_url`. Production iOS lanes never set
+      # this; only an explicit Rust rebuild (e.g. via `make
+      # rust-ios-sim-test-injection`) enables the symbols.
+      if [ -n "$CARGO_FEATURES" ]; then
+        CARGO_FEATURES="$CARGO_FEATURES,test-injection"
+      else
+        CARGO_FEATURES="--features test-injection"
+      fi
+      if [ -n "$BINDINGS_FEATURE_LIST" ]; then
+        BINDINGS_FEATURE_LIST="$BINDINGS_FEATURE_LIST,test-injection"
+      else
+        BINDINGS_FEATURE_LIST="test-injection"
+      fi
+      # Bindings must be regenerated when the feature toggles so the
+      # generated Swift surface exposes the test-injection symbols.
+      FORCE_BINDINGS=1
+      ;;
     *)
-      echo "usage: $(basename "$0") [--preserve-current|--recorded-gitlink] [--device-only] [--fast-device] [--fast-sim] [--macabi-only] [--fast-macabi] [--force-bindings] [--skip-bindings] [--rpc-trace]" >&2
+      echo "usage: $(basename "$0") [--preserve-current|--recorded-gitlink] [--device-only] [--fast-device] [--fast-sim] [--macabi-only] [--fast-macabi] [--force-bindings] [--skip-bindings] [--rpc-trace] [--test-injection]" >&2
       exit 1
       ;;
   esac
@@ -213,8 +238,13 @@ export MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET"
 # bindgen 0.70 maps `aarch64-apple-ios-sim` -> `arm64-apple-ios-sim`, which
 # clang rejects ("version 'sim' in target triple ... is invalid"). The correct
 # clang triple uses the `-simulator` environment suffix. Override per-target so
-# bindgen-driven build scripts (e.g. ish-embed-host) point at the iPhoneSimulator
-# SDK when cross-compiling for the simulator.
+# bindgen-driven build scripts (e.g. ish-embed-host, rquickjs-sys) point at the
+# matching iPhoneOS/iPhoneSimulator SDK when cross-compiling. Both variants
+# include the SDK sysroot so bindgen can resolve standard C headers.
+IPHONEOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path 2>/dev/null || true)"
+if [ -n "$IPHONEOS_SDK" ]; then
+  export BINDGEN_EXTRA_CLANG_ARGS_aarch64_apple_ios="--target=arm64-apple-ios${IOS_DEPLOYMENT_TARGET} -isysroot ${IPHONEOS_SDK}"
+fi
 IPHONESIM_SDK="$(xcrun --sdk iphonesimulator --show-sdk-path 2>/dev/null || true)"
 if [ -n "$IPHONESIM_SDK" ]; then
   export BINDGEN_EXTRA_CLANG_ARGS_aarch64_apple_ios_sim="--target=arm64-apple-ios${IOS_DEPLOYMENT_TARGET}-simulator -isysroot ${IPHONESIM_SDK}"
@@ -282,7 +312,12 @@ maybe_generate_swift_bindings() {
 
   echo "==> Regenerating UniFFI Swift bindings -> $UNIFFI_OUT"
   cd "$RUST_BRIDGE_DIR"
-  "$RUST_BRIDGE_DIR/generate-bindings.sh" --swift-only
+  local -a bindings_extra_args=()
+  if [ -n "$BINDINGS_FEATURE_LIST" ]; then
+    bindings_extra_args+=("--features=$BINDINGS_FEATURE_LIST")
+  fi
+  "$RUST_BRIDGE_DIR/generate-bindings.sh" --swift-only \
+    ${bindings_extra_args[@]+"${bindings_extra_args[@]}"}
   cp "$GENERATED_SWIFT_DIR/codex_mobile_client.swift" "$UNIFFI_OUT"
   sync_generated_headers
   printf '%s\n' "$current_hash" >"$BINDINGS_HASH_FILE"

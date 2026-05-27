@@ -456,7 +456,13 @@ struct ContentView: View {
                 LitterTheme.backgroundGradient.ignoresSafeArea()
 
                 #if DEBUG
-                if ConversationDisplayUITestHarnessView.isEnabled {
+                if PiCapabilityFixtureUITestHarnessView.isEnabled {
+                    PiCapabilityFixtureUITestHarnessView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if PiRetryTurnUITestHarnessView.isEnabled {
+                    PiRetryTurnUITestHarnessView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if ConversationDisplayUITestHarnessView.isEnabled {
                     ConversationDisplayUITestHarnessView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -473,7 +479,9 @@ struct ContentView: View {
                 #endif
 
                 #if DEBUG
-                if !ConversationDisplayUITestHarnessView.isEnabled {
+                if !ConversationDisplayUITestHarnessView.isEnabled
+                    && !PiRetryTurnUITestHarnessView.isEnabled
+                    && !PiCapabilityFixtureUITestHarnessView.isEnabled {
                     standardOverlays
                 }
                 #else
@@ -1114,7 +1122,8 @@ private struct HomeNavigationView: View {
             session: voiceRuntime.activeVoiceSession,
             isAvailable: true,
             isStarting: isStartingVoice,
-            action: startHomeVoiceSession
+            action: startHomeVoiceSession,
+            agentRuntimeKind: activeServerAgentRuntimeKind
         )
         // Match the bottom inset used by `HomeBottomBar` inside
         // `HomeDashboardView.bottomChrome` so the mic button sits on the
@@ -1122,6 +1131,46 @@ private struct HomeNavigationView: View {
         .padding(.leading, 14)
         .padding(.bottom, 4)
     }
+
+    /// Canonical id of the active server's agent runtime, resolved
+    /// from the active thread first (if any) and otherwise from the
+    /// home-dashboard's currently selected server. Returned to the
+    /// home voice launcher and other production voice surfaces so
+    /// `PiCapabilityGates.showsVoice(...)` can hide the affordance
+    /// when the active server's runtime advertises `voice = false`.
+    ///
+    /// DEBUG builds honor `--ui-test-pi-active-runtime-kind <kind>`
+    /// so production-surface XCUITests can synthesize a pi server
+    /// without booting the alleycat manifest end-to-end.
+    private var activeServerAgentRuntimeKind: String? {
+        #if DEBUG
+        if let override = HomeNavigationView.uiTestActiveRuntimeOverride() {
+            return override
+        }
+        #endif
+        if let active = appModel.snapshot?.activeThread,
+           let thread = appModel.snapshot?.threadSnapshot(for: active) {
+            return thread.agentRuntimeKind
+        }
+        if let serverId = homeDashboardModel.selectedServerId,
+           let server = homeDashboardModel.connectedServers.first(where: { $0.id == serverId }) {
+            return server.agentRuntimes.first(where: { $0.available })?.kind
+                ?? server.agentRuntimes.first?.kind
+        }
+        return nil
+    }
+
+    #if DEBUG
+    private static func uiTestActiveRuntimeOverride() -> String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let idx = args.firstIndex(of: "--ui-test-pi-active-runtime-kind"),
+              idx + 1 < args.count else {
+            return nil
+        }
+        let value = args[idx + 1].trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+    #endif
 
     private func startHomeVoiceSession() {
         guard !isStartingVoice else { return }

@@ -4,7 +4,7 @@ import os
 
 @objc(CarPlaySceneDelegate)
 final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
-    private static let log = Logger(subsystem: "com.sigkitten.litter", category: "CarPlay")
+    private static let log = Logger(subsystem: "com.larkinwc.pilitter", category: "CarPlay")
 
     private var interfaceController: CPInterfaceController?
     private var voiceManager: CarPlayVoiceManager?

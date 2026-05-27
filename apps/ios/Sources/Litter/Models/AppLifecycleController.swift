@@ -5,7 +5,7 @@ import UserNotifications
 import os
 
 private let appLifecycleSignpostLog = OSLog(
-    subsystem: Bundle.main.bundleIdentifier ?? "com.sigkitten.litter",
+    subsystem: Bundle.main.bundleIdentifier ?? "com.larkinwc.pilitter",
     category: "lifecycle"
 )
 

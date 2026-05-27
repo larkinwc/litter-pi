@@ -125,51 +125,9 @@ open -a "Android Studio" apps/android                                  # open in
 cd apps/android && ./gradlew :app:testDebugUnitTest                    # run tests
 gradle -p apps/android :app:assembleOnDeviceDebug :app:assembleRemoteOnlyDebug  # build flavors
 ```
+## TestFlight / App Store / Mac Distribution
 
-## TestFlight (iOS)
-
-1. Authenticate with App Store Connect:
-
-   ```bash
-   asc auth login \
-     --name "Litter ASC" \
-     --key-id "<KEY_ID>" \
-     --issuer-id "<ISSUER_ID>" \
-     --private-key "$HOME/AppStore.p8" \
-     --network
-   ```
-
-2. Bootstrap TestFlight defaults:
-
-   ```bash
-   APP_BUNDLE_ID=<BUNDLE_ID> ./apps/ios/scripts/testflight-setup.sh
-   ```
-
-3. Build and upload:
-
-   ```bash
-   APP_BUNDLE_ID=<BUNDLE_ID> \
-   APP_STORE_APP_ID=<APP_STORE_CONNECT_APP_ID> \
-   TEAM_ID=<APPLE_TEAM_ID> \
-   ASC_KEY_ID=<KEY_ID> \
-   ASC_ISSUER_ID=<ISSUER_ID> \
-   ASC_PRIVATE_KEY_PATH="$HOME/AppStore.p8" \
-   ./apps/ios/scripts/testflight-upload.sh
-   ```
-
-   - Reads `MARKETING_VERSION` from `apps/ios/project.yml`; auto-bumps patch if the version is already live.
-   - Auto-increments build number from the latest App Store Connect build.
-
-## App Store Release (iOS)
-
-```bash
-APP_BUNDLE_ID=<BUNDLE_ID> \
-APP_STORE_APP_ID=<APP_STORE_CONNECT_APP_ID> \
-TEAM_ID=<APPLE_TEAM_ID> \
-ASC_KEY_ID=<KEY_ID> \
-ASC_ISSUER_ID=<ISSUER_ID> \
-ASC_PRIVATE_KEY_PATH="$HOME/AppStore.p8" \
-./apps/ios/scripts/app-store-release.sh
-```
-
-Metadata is sourced from `apps/ios/fastlane/metadata/en-US/`.
+Removed pending a publishing-identity migration. The previous publish flow
+targeted `com.sigkitten.litter` + team `UH66Q8ZAYG`; local sideload now uses
+`com.larkinwc.pilitter` + team `PGN9D562MZ`. Re-add publishing scripts and
+workflows when the release identity is migrated.

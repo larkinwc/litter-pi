@@ -29,10 +29,29 @@
         <activity
             android:name="com.litter.android.MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!--
+              Anthropic OAuth (Claude Code) PKCE redirect. The Chrome
+              Custom Tab launched from `AnthropicOAuthScreen` redirects
+              back to `litter://oauth/pi/anthropic?code=...&state=...`
+              after the user finishes the consent screen. The deep-link
+              intent filter funnels the redirect into `MainActivity`
+              which forwards the URI to `AnthropicOAuthCallbackBus`
+              for the Compose surface to consume. See VAL-AUTH-003.
+            -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="litter"
+                    android:host="oauth"
+                    android:pathPrefix="/pi/anthropic" />
             </intent-filter>
         </activity>
         <activity

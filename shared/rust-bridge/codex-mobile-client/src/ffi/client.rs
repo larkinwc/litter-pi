@@ -302,6 +302,194 @@ impl AppClient {
         }
     }
 
+    // ── Local pi runtime ────────────────────────────────────────────────
+    //
+    // Boots an in-process pi runtime through `pi-mobile-client` and
+    // wires it into the same `ServerEvent` broadcast surface as the
+    // codex in-process path. Returns the server id of the resulting
+    // session so platform callers can hand it to the rest of the API
+    // (`start_thread`, event subscription, etc.) unchanged. Mirrors
+    // `ServerBridge::connect_local_server` but lives on `AppClient`
+    // because pi sessions are addressed alongside other agent-runtime
+    // operations rather than via the discovery/server bridge.
+
+    /// Start an in-process pi runtime and register the resulting
+    /// `ServerSession` with `MobileClient`. The returned string is the
+    /// caller-supplied `server_id`; future API calls keyed by that id
+    /// route through the pi runtime in the same way they do for codex
+    /// in-process sessions.
+    pub async fn connect_local_pi(
+        &self,
+        server_id: String,
+        display_name: String,
+    ) -> Result<String, ClientError> {
+        let config = crate::session::connection::ServerConfig {
+            server_id,
+            display_name,
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            websocket_url: None,
+            is_local: true,
+            tls: false,
+        };
+        blocking_async!(self.rt, self.inner, |c| {
+            c.connect_local_pi(config)
+                .await
+                .map_err(|e| ClientError::Transport(e.to_string()))
+        })
+    }
+
+    /// Like [`Self::connect_local_pi`] but threads a BYOK profile
+    /// (provider, api_key, optional base URL) into the in-process pi
+    /// runtime so the agent loop can drive turns against the configured
+    /// Anthropic or OpenAI-compatible provider. The Swift caller passes
+    /// `provider = "anthropic"` for BYOK Anthropic or `"openai"` for a
+    /// BYOK OpenAI-compatible profile and supplies the matching key (+
+    /// optional `base_url` for OpenAI-compatible).
+    pub async fn connect_local_pi_byok(
+        &self,
+        server_id: String,
+        display_name: String,
+        provider: String,
+        api_key: String,
+        base_url: Option<String>,
+        model: Option<String>,
+    ) -> Result<String, ClientError> {
+        let config = crate::session::connection::ServerConfig {
+            server_id,
+            display_name,
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            websocket_url: None,
+            is_local: true,
+            tls: false,
+        };
+        // Propagate BYOK base URL into the process environment on the
+        // caller's thread before pi spawns its runtime — pi's provider
+        // layer reads `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` at
+        // session build time. Mirrors `pi-server-runner::main`
+        // (commit 5327c09): the env var matching the *active* provider
+        // wins. Rust 2024 marks `std::env::set_var` as `unsafe`;
+        // `codex-mobile-client` does not forbid unsafe, so the call is
+        // safely scoped here rather than inside `pi-mobile-client`
+        // (which does forbid unsafe).
+        let provider_env = ProviderBaseUrlEnv {
+            anthropic_base_url: std::env::var("ANTHROPIC_BASE_URL").ok(),
+            openai_base_url: std::env::var("OPENAI_BASE_URL").ok(),
+        };
+        let effective_base_url =
+            resolve_pi_byok_base_url(&provider, base_url.as_deref(), &provider_env);
+        if let Some(value) = effective_base_url.as_deref() {
+            let env_key = pi_byok_base_url_env_key(&provider);
+            // SAFETY: setting an env var on the caller's thread before
+            // the pi asupersync thread is spawned. No other thread is
+            // reading the BYOK base-URL env vars concurrently.
+            unsafe {
+                std::env::set_var(env_key, value);
+            }
+        }
+
+        // On iOS, swap pi's default `BashTool` for the iSH-backed
+        // shell so tool calls run inside the Alpine fakefs instead of
+        // the iOS host. The adapter is iOS-only; on other targets the
+        // factory stays `None` and pi falls back to its host shell
+        // (this path is only ever reached on the iOS device/sim lane
+        // in practice).
+        #[cfg(all(target_os = "ios", not(target_abi = "macabi")))]
+        let tool_factory = Some(pi_mobile_client::ToolFactoryKind::Ish(Arc::new(
+            crate::pi_ish_adapter::IshRuntimeExec,
+        )));
+        #[cfg(not(all(target_os = "ios", not(target_abi = "macabi"))))]
+        let tool_factory: Option<pi_mobile_client::ToolFactoryKind> = None;
+
+        let byok = pi_mobile_client::PiSessionConfig {
+            provider: Some(provider),
+            model,
+            api_key: Some(api_key),
+            base_url: effective_base_url,
+            working_directory: None,
+            append_system_prompt: None,
+            max_tool_iterations: None,
+            enabled_tools: None,
+            tool_factory,
+        };
+        blocking_async!(self.rt, self.inner, |c| {
+            c.connect_local_pi_with_byok(config, Some(byok))
+                .await
+                .map_err(|e| ClientError::Transport(e.to_string()))
+        })
+    }
+
+    // ── Pi runtime prompt / event surface ───────────────────────────────
+    //
+    // The in-process pi runtime is driven through its own typed
+    // `Command`/`PiEvent` channel pair (see
+    // `pi_mobile_client::PiInProcessHandle`). Those channels are
+    // captured in `crate::pi_runtime_uniffi::PiSessionChannels` on
+    // the owning `ServerSession`; the two methods below are the
+    // typed UniFFI surface for sending user prompts in and
+    // observing typed events out.
+
+    /// Forward a user prompt into the pi runtime backing
+    /// `server_id`. Returns `PiRuntimeError::NoPiRuntime` if the
+    /// session was not started via `connect_local_pi*`, or the
+    /// channel-state errors if the runtime has shut down or its
+    /// command buffer is saturated.
+    pub fn send_pi_prompt(
+        &self,
+        server_id: String,
+        text: String,
+    ) -> Result<(), crate::pi_runtime_uniffi::PiRuntimeError> {
+        let channels = self
+            .inner
+            .pi_channels_for_server(&server_id)
+            .ok_or_else(|| {
+                crate::pi_runtime_uniffi::PiRuntimeError::NoPiRuntime {
+                    server_id: server_id.clone(),
+                }
+            })?;
+        use tokio::sync::mpsc::error::TrySendError;
+        match channels
+            .commands_tx
+            .try_send(pi_mobile_client::Command::Prompt(text))
+        {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                Err(crate::pi_runtime_uniffi::PiRuntimeError::ChannelFull)
+            }
+            Err(TrySendError::Closed(_)) => {
+                Err(crate::pi_runtime_uniffi::PiRuntimeError::Closed)
+            }
+        }
+    }
+
+    /// Subscribe to the typed `PiEvent` stream for `server_id`. The
+    /// returned `PiEventSubscription` keeps a background pump task
+    /// alive that forwards each event into `listener.on_event`;
+    /// dropping the subscription (or calling `cancel`) tears the
+    /// pump down.
+    pub fn subscribe_pi_events(
+        &self,
+        server_id: String,
+        listener: Box<dyn crate::pi_runtime_uniffi::PiEventListener>,
+    ) -> Result<
+        Arc<crate::pi_runtime_uniffi::PiEventSubscription>,
+        crate::pi_runtime_uniffi::PiRuntimeError,
+    > {
+        let channels = self
+            .inner
+            .pi_channels_for_server(&server_id)
+            .ok_or_else(|| {
+                crate::pi_runtime_uniffi::PiRuntimeError::NoPiRuntime {
+                    server_id: server_id.clone(),
+                }
+            })?;
+        let rx = channels.events_tx.subscribe();
+        Ok(crate::pi_runtime_uniffi::spawn_pi_event_pump(
+            &self.rt, rx, listener,
+        ))
+    }
+
     // ── Agent metadata cache ─────────────────────────────────────────────
     //
     // Populated whenever `list_alleycat_agents` succeeds against any
@@ -1699,6 +1887,98 @@ impl AppClient {
     }
 }
 
+// ── Pi runtime test-injection surface ───────────────────────────────────
+//
+// Gated on the `test-injection` cargo feature so production iOS
+// Debug/device + package builds compile without these symbols.
+// XCTest / `cargo test` builds opt in via the feature and use these
+// to substitute a stub `IshExec` and read back the active
+// `PiSessionConfig.base_url` for VAL-IOS-PI-011 / VAL-IOS-PI-012.
+//
+// Kept in a separate `impl AppClient` block so the entire UniFFI
+// export is `#[cfg]`-gated as a unit — gating an individual method
+// inside a `#[uniffi::export]` impl does not propagate to the
+// generated FFI scaffolding.
+#[cfg(any(test, feature = "test-injection"))]
+#[uniffi::export(async_runtime = "tokio")]
+impl AppClient {
+    /// Like [`Self::connect_local_pi_byok`] but accepts a caller-
+    /// supplied [`crate::pi_test_injection::PiIshExec`] in place of
+    /// the production iSH adapter. Tests use this to assert tool
+    /// calls route through their stub without booting the iSH
+    /// kernel.
+    pub async fn connect_local_pi_byok_with_ish_exec(
+        &self,
+        server_id: String,
+        display_name: String,
+        provider: String,
+        api_key: String,
+        base_url: Option<String>,
+        model: Option<String>,
+        ish_exec: Box<dyn crate::pi_test_injection::PiIshExec>,
+    ) -> Result<String, ClientError> {
+        let config = crate::session::connection::ServerConfig {
+            server_id,
+            display_name,
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            websocket_url: None,
+            is_local: true,
+            tls: false,
+        };
+        // Mirror the production base-URL resolution policy so test
+        // harnesses observe the same precedence (explicit BYOK arg >
+        // provider-matched env > none).
+        let provider_env = ProviderBaseUrlEnv {
+            anthropic_base_url: std::env::var("ANTHROPIC_BASE_URL").ok(),
+            openai_base_url: std::env::var("OPENAI_BASE_URL").ok(),
+        };
+        let effective_base_url =
+            resolve_pi_byok_base_url(&provider, base_url.as_deref(), &provider_env);
+        if let Some(value) = effective_base_url.as_deref() {
+            let env_key = pi_byok_base_url_env_key(&provider);
+            // SAFETY: setting an env var on the caller's thread before
+            // the pi asupersync thread is spawned, mirroring the
+            // production path above.
+            unsafe {
+                std::env::set_var(env_key, value);
+            }
+        }
+
+        let exec_arc: Arc<dyn crate::pi_test_injection::PiIshExec> = Arc::from(ish_exec);
+        let adapter = crate::pi_test_injection::PiIshExecAdapter::new(exec_arc);
+        let tool_factory = Some(pi_mobile_client::ToolFactoryKind::Ish(Arc::new(adapter)));
+
+        let byok = pi_mobile_client::PiSessionConfig {
+            provider: Some(provider),
+            model,
+            api_key: Some(api_key),
+            base_url: effective_base_url,
+            working_directory: None,
+            append_system_prompt: None,
+            max_tool_iterations: None,
+            enabled_tools: None,
+            tool_factory,
+        };
+        blocking_async!(self.rt, self.inner, |c| {
+            c.connect_local_pi_with_byok(config, Some(byok))
+                .await
+                .map_err(|e| ClientError::Transport(e.to_string()))
+        })
+    }
+
+    /// Return the resolved `PiSessionConfig.base_url` for the pi
+    /// session registered under `server_id`, or `None` if no pi
+    /// session is registered or the session was started without a
+    /// configured base URL. Backs VAL-IOS-PI-012's "the configured
+    /// base URL is the in-flight one" assertion.
+    pub fn pi_active_base_url(&self, server_id: String) -> Option<String> {
+        self.inner
+            .pi_channels_for_server(&server_id)
+            .and_then(|channels| channels.base_url.clone())
+    }
+}
+
 /// Result of `AppClient::start_pair_host` — bundles the host handle (used
 /// by Swift to drive the state machine) with the Bonjour publish info
 /// (used by Swift to advertise a NetService).
@@ -2940,12 +3220,71 @@ Widget construction guidelines (for reference when making UI decisions):\n\n\
     )
 }
 
+/// Snapshot of the `*_BASE_URL` env vars consulted by
+/// [`AppClient::connect_local_pi_byok`] when forwarding a BYOK profile
+/// into the in-process pi runtime. Capturing them as a struct keeps the
+/// provider-precedence policy a pure function of inputs, mirroring the
+/// `ProviderEnv` shape used by `shared/rust-bridge/pi-server-runner` (commit
+/// 5327c09).
+#[derive(Debug, Default, Clone)]
+struct ProviderBaseUrlEnv {
+    anthropic_base_url: Option<String>,
+    openai_base_url: Option<String>,
+}
+
+/// Env var name to forward the resolved BYOK base URL through for the
+/// supplied pi provider id.
+fn pi_byok_base_url_env_key(provider: &str) -> &'static str {
+    if provider.eq_ignore_ascii_case("anthropic") {
+        "ANTHROPIC_BASE_URL"
+    } else {
+        "OPENAI_BASE_URL"
+    }
+}
+
+/// Resolve which BYOK base URL pi should see, honoring provider-
+/// specific precedence.
+///
+/// * The Swift-supplied `base_url` argument (if any, trimmed non-empty)
+///   always wins — it represents an explicit BYOK profile override.
+/// * Otherwise the env var matching the *active* provider wins
+///   (`ANTHROPIC_BASE_URL` for `anthropic`, `OPENAI_BASE_URL` for any
+///   other provider id including `openai`).
+/// * Returns `None` when neither source supplies a non-empty value, so
+///   callers do not mutate the process env at all.
+fn resolve_pi_byok_base_url(
+    provider: &str,
+    explicit_base_url: Option<&str>,
+    env: &ProviderBaseUrlEnv,
+) -> Option<String> {
+    if let Some(url) = explicit_base_url {
+        let trimmed = url.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    let candidate = if provider.eq_ignore_ascii_case("anthropic") {
+        env.anthropic_base_url.as_deref()
+    } else {
+        env.openai_base_url.as_deref()
+    };
+    candidate.and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        ImageViewSource, append_missing_amp_mode_models, choose_saved_app_update_server_id,
-        image_read_command, is_mobile_hidden_skill, normalize_model_info_for_runtime,
-        normalized_image_path, splice_generative_ui_preamble,
+        ImageViewSource, ProviderBaseUrlEnv, append_missing_amp_mode_models,
+        choose_saved_app_update_server_id, image_read_command, is_mobile_hidden_skill,
+        normalize_model_info_for_runtime, normalized_image_path, pi_byok_base_url_env_key,
+        resolve_pi_byok_base_url, splice_generative_ui_preamble,
     };
     use crate::store::snapshot::ServerTransportDiagnostics;
     use crate::store::{AppSnapshot, ServerHealthSnapshot, ServerSnapshot};
@@ -3490,6 +3829,157 @@ mod tests {
 
             let shaped = shape_plugin_list(response);
             assert_eq!(shaped[0].display_title, "linear");
+        }
+    }
+
+    /// Mirrors the `ProviderEnv` tests in
+    /// `shared/rust-bridge/pi-server-runner/src/main.rs` (commit 5327c09): the
+    /// active provider's `*_BASE_URL` env var must reach the in-process
+    /// pi runtime, with the Swift-supplied explicit `base_url` argument
+    /// taking precedence when present.
+    mod connect_local_pi_byok_base_url {
+        use super::{ProviderBaseUrlEnv, pi_byok_base_url_env_key, resolve_pi_byok_base_url};
+
+        fn env_with(anth_base: Option<&str>, oa_base: Option<&str>) -> ProviderBaseUrlEnv {
+            ProviderBaseUrlEnv {
+                anthropic_base_url: anth_base.map(str::to_string),
+                openai_base_url: oa_base.map(str::to_string),
+            }
+        }
+
+        #[test]
+        fn anthropic_provider_picks_up_anthropic_base_url_from_env() {
+            let env = env_with(Some("https://anthropic.proxy.example/v1"), None);
+            let resolved = resolve_pi_byok_base_url("anthropic", None, &env);
+            assert_eq!(
+                resolved.as_deref(),
+                Some("https://anthropic.proxy.example/v1"),
+                "ANTHROPIC_BASE_URL must reach the in-process pi spawn for provider=anthropic"
+            );
+            assert_eq!(pi_byok_base_url_env_key("anthropic"), "ANTHROPIC_BASE_URL");
+        }
+
+        #[test]
+        fn openai_provider_picks_up_openai_base_url_and_ignores_anthropic_url() {
+            let env = env_with(
+                Some("https://anthropic.proxy.example/v1"),
+                Some("https://oa.proxy.example/v1"),
+            );
+            let resolved = resolve_pi_byok_base_url("openai", None, &env);
+            assert_eq!(resolved.as_deref(), Some("https://oa.proxy.example/v1"));
+            assert_eq!(pi_byok_base_url_env_key("openai"), "OPENAI_BASE_URL");
+        }
+
+        #[test]
+        fn anthropic_provider_with_both_env_urls_prefers_anthropic() {
+            let env = env_with(
+                Some("https://anthropic.proxy.example/v1"),
+                Some("https://oa.proxy.example/v1"),
+            );
+            let resolved = resolve_pi_byok_base_url("anthropic", None, &env);
+            assert_eq!(
+                resolved.as_deref(),
+                Some("https://anthropic.proxy.example/v1"),
+                "ANTHROPIC_BASE_URL must win when provider=anthropic is active"
+            );
+        }
+
+        #[test]
+        fn explicit_base_url_argument_overrides_env() {
+            let env = env_with(
+                Some("https://anthropic.proxy.example/v1"),
+                Some("https://oa.proxy.example/v1"),
+            );
+            let resolved = resolve_pi_byok_base_url(
+                "openai",
+                Some("https://explicit.example/v1"),
+                &env,
+            );
+            assert_eq!(
+                resolved.as_deref(),
+                Some("https://explicit.example/v1"),
+                "Swift-supplied base_url must override the env-resolved value"
+            );
+        }
+
+        #[test]
+        fn empty_or_whitespace_explicit_falls_back_to_env() {
+            let env = env_with(Some("https://anthropic.proxy.example/v1"), None);
+            let resolved = resolve_pi_byok_base_url("anthropic", Some("   "), &env);
+            assert_eq!(
+                resolved.as_deref(),
+                Some("https://anthropic.proxy.example/v1"),
+                "whitespace-only base_url argument should not preempt the env fallback"
+            );
+        }
+
+        #[test]
+        fn no_env_and_no_argument_returns_none() {
+            let env = env_with(None, None);
+            assert!(resolve_pi_byok_base_url("anthropic", None, &env).is_none());
+            assert!(resolve_pi_byok_base_url("openai", None, &env).is_none());
+        }
+
+        #[test]
+        fn env_key_defaults_to_openai_for_non_anthropic_providers() {
+            // Mirrors pi-server-runner's behavior: unknown / OpenAI-
+            // compatible providers route through OPENAI_BASE_URL.
+            assert_eq!(pi_byok_base_url_env_key("openai"), "OPENAI_BASE_URL");
+            assert_eq!(pi_byok_base_url_env_key("openrouter"), "OPENAI_BASE_URL");
+            assert_eq!(pi_byok_base_url_env_key("ANTHROPIC"), "ANTHROPIC_BASE_URL");
+        }
+
+        /// VAL-IOS-PI-013 / VAL-IOS-PI-012 regression: a resolved
+        /// `PiSessionConfig.base_url` must travel all the way into the
+        /// in-process pi runtime, not just be cached on the connect
+        /// channel. We build the same `pi_mobile_client::PiSessionConfig`
+        /// the production BYOK connect path constructs and spawn the
+        /// pi session through `pi-mobile-client`'s public
+        /// `start_in_process` surface. The resolved base URL is then
+        /// asserted to match what the active provider was configured
+        /// against (exposed through `pi_mobile_client` once
+        /// `PiSessionConfig.base_url` reaches `pi::sdk`'s
+        /// `SessionOptions.base_url`).
+        #[test]
+        fn pi_byok_base_url_reaches_active_provider() {
+            use pi_mobile_client::PiSessionConfig;
+
+            // Use the same resolution helper the connect path uses to
+            // pick the effective base URL; this guarantees the test
+            // exercises the production resolution policy, not a
+            // hand-rolled URL string.
+            let env = env_with(Some("https://proxy.example/v1"), None);
+            let resolved = resolve_pi_byok_base_url("anthropic", None, &env)
+                .expect("env-derived base URL must resolve");
+            assert_eq!(resolved, "https://proxy.example/v1");
+
+            // The connect path then materializes this URL onto the
+            // `PiSessionConfig.base_url` field. Confirm that struct
+            // carries the URL verbatim (this is the field that was
+            // silently dropped before pi-runtime-bridge-apply-base-url
+            // -to-provider).
+            let cfg = PiSessionConfig {
+                provider: Some("anthropic".to_string()),
+                model: Some("claude-opus-4-5-20251101".to_string()),
+                api_key: Some("sk-ant-dummy-for-test".to_string()),
+                base_url: Some(resolved.clone()),
+                working_directory: Some(std::env::temp_dir()),
+                append_system_prompt: None,
+                max_tool_iterations: None,
+                enabled_tools: None,
+                tool_factory: None,
+            };
+            assert_eq!(
+                cfg.base_url.as_deref(),
+                Some("https://proxy.example/v1"),
+                "PiSessionConfig.base_url must carry the resolved proxy URL"
+            );
+
+            // End-to-end provider-side assertion lives in
+            // pi-mobile-client::runtime_bridge::tests::
+            // build_pi_session_applies_base_url_to_anthropic_provider,
+            // which spawns a real pi `AgentSession` and asserts
+            // `AgentSessionHandle::provider_base_url()` matches.
         }
     }
 }

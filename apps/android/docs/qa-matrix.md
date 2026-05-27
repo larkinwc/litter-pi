@@ -39,6 +39,12 @@ Current automated checks:
 | Thread turn pagination (v0.125+ remote) | Conversation opens with last 5 turns; "Load earlier messages" button fetches older 5-turn pages via `thread/turns/list` | Same |
 | Thread turn pagination fallback (v0.124 remote) | Capability flips off via response inspection; embedded turns load fully; "Load earlier" button hidden | Same |
 
+## Pi Runtime Parity
+
+| Area | Android UI manual QA | Substitute coverage |
+|---|---|---|
+| Pi runtime (in-process + BYOK + capability gates) | **Deferred** — no Android emulator is available on the worker host, so the Compose UI shell for `AlleycatAgentRuntimeKind.Pi` (Anthropic OAuth screen, `PiCapabilityGates` hiding voice + plans, BYOK settings entry) cannot be exercised interactively yet. Pi ships iOS-first; Android UI manual QA picks up once an emulator / device is available. | Shared Rust pi runtime, in-process tool factory, BYOK plumbing, and Anthropic OAuth handshake are validated host-side via `cargo test -p codex-mobile-client` / `cargo test -p pi-mobile-client` / `cargo test -p pi-server-runner` plus the `pi-server-runner --local` / `--byok` / `--oauth-paste` modes. Android Rust cross-compile is gated through `cargo ndk -t arm64-v8a -t x86_64 build -p pi-mobile-client`. Kotlin UniFFI bindings expose `AlleycatAgentRuntimeKind.Pi`, and the Android Compose UI files (`AnthropicOAuthScreen.kt`, `PiCapabilityGates.kt`) are validated by grep-shape checks only. |
+
 ## Terminal UX Matrix
 
 The terminal screen renders through Ghostty on both platforms; this section
@@ -277,3 +283,4 @@ Replaces the prior WebSocket + base64-PCM audio pump with a platform-native WebR
 | Known non-blockers | Per-frame input/output meter animation no longer drives — requires `RTCRtpReceiver.stats` polling to restore (follow-up) | Same flat meter behavior; speaker toggle currently stubbed to a boolean — follow-up to honor runtime routing |
 | Regression: custom AEC path | Retired — `codex-ios-audio` crate + `AecBridge.swift` / `VoiceSessionAudioCodec.swift` were deleted; libwebrtc AEC3 handles echo cancellation natively | Retired — `AecBridge.kt` deleted; `JavaAudioDeviceModule` enables the hardware AEC + NS |
 | Regression: SSH-tunneled codex server | RPC still flows through SSH; WebRTC peer goes direct to OpenAI edge from device. If client runs in fully air-gapped network, realtime voice will not establish | Same |
+| Pi auth: claude-credentials reuse | `pi-server-runner --import-claude-credentials --credentials-path <PATH>` (or `CLAUDE_CREDENTIALS_JSON_PATH=...`) populates pi's `auth.json` `anthropic` OAuth entry from Claude Code's stored credentials so VAL-AUTH-006/007 (refresh + persistence) can be exercised without an interactive sign-in; tokens never appear in logs | Same |

@@ -61,7 +61,9 @@ impl App {
 
     pub async fn run(
         &mut self,
-        terminal: &mut ratatui::Terminal<impl ratatui::backend::Backend>,
+        terminal: &mut ratatui::Terminal<
+            impl ratatui::backend::Backend<Error = std::io::Error>,
+        >,
     ) -> anyhow::Result<()> {
         let tick_rate = Duration::from_millis(100);
         let mut event_stream = crossterm::event::EventStream::new();

@@ -11,7 +11,7 @@ crate-type = ["lib", "cdylib"]
 
 [dependencies]
 uniffi = { version = "0.31.0", features = ["tokio"] }
-iroh = "0.98.1"
+iroh = "1.0.0-rc.0"
 codex-app-server = { workspace = true }
 codex-app-server-client = { workspace = true }
 codex-app-server-protocol = { workspace = true }
@@ -28,6 +28,7 @@ codex-git-utils = { workspace = true }
 codex-feedback = { workspace = true }
 codex-arg0 = { workspace = true }
 alleycat-bridge-core = { workspace = true }
+pi-mobile-client = { path = "../pi-mobile-client" }
 alleycat-pi-bridge = { workspace = true }
 alleycat-claude-bridge = { workspace = true }
 alleycat-opencode-bridge = { workspace = true }
@@ -58,9 +59,17 @@ unicode-segmentation = "1"
 
 [features]
 rpc-trace = []
+# Opt-in surface that exposes test-injection points (a sibling
+# `AppClient.connect_local_pi_byok_with_ish_exec` constructor and a
+# `pi_active_base_url` accessor) so XCTest / Rust integration tests can
+# substitute a stub `IshExec` and assert the active BYOK base URL
+# without booting the iSH kernel. Defaults off so production iOS/Android
+# builds do not ship the symbols.
+test-injection = []
 
 [dev-dependencies]
 tempfile = "3"
+serial_test = "3"
 
 [build-dependencies]
 uniffi = { version = "0.31.0", features = ["build"] }

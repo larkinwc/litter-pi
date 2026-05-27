@@ -65,26 +65,29 @@ enum LitterPlatform {
         let bundlePath = bundleFs.path
         let appSupportPath = appSupport.path
         let docsPath = docs.path
-        // First-launch rootfs extraction can take 10-30s. Bootstrapping
-        // synchronously on the main actor froze the UI and made the
-        // Terminal route race the kernel boot. Run it on a background
-        // queue and let `instance_or_wait` on the Rust side handle the
-        // race so the UI stays responsive.
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                try ishBootstrap(
-                    bundleFsPath: bundlePath,
-                    applicationSupportDir: appSupportPath,
-                    documentsDir: docsPath
-                )
-                finishLocalRuntimeBootstrap(.ready)
-                Task { @MainActor in
-                    await UserMountStore.shared.loadAndRemountAll()
-                }
-            } catch {
-                NSLog("[ish] bootstrap failed: \(error)")
-                finishLocalRuntimeBootstrap(.idle)
+        // `ishBootstrap` only records the iSH paths and installs the
+        // codex-core exec hook; it does NOT boot the Alpine kernel
+        // anymore. The kernel is faulted in lazily on the first
+        // tool-exec invocation (see `ish_runtime::ensure_booted` in
+        // codex-mobile-client). Path recording is cheap (a few
+        // syscalls) and idempotent, so doing it inline here lets the
+        // exec hook be ready before any agent code asks for a shell.
+        // Rootfs extraction and the actual `IshInstance::boot` still
+        // run on a background thread because the lazy boot path is
+        // serialized off the calling thread.
+        do {
+            try ishBootstrap(
+                bundleFsPath: bundlePath,
+                applicationSupportDir: appSupportPath,
+                documentsDir: docsPath
+            )
+            finishLocalRuntimeBootstrap(.ready)
+            Task { @MainActor in
+                await UserMountStore.shared.loadAndRemountAll()
             }
+        } catch {
+            NSLog("[ish] bootstrap failed: \(error)")
+            finishLocalRuntimeBootstrap(.idle)
         }
 #endif
     }

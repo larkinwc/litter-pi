@@ -18,7 +18,7 @@ pub struct IshRunResult {
 /// Errors surfaced from `ish_bootstrap`. Variant payloads are flattened to
 /// plain strings so the generated Swift/Kotlin enum is straightforward to
 /// consume.
-#[derive(Debug, thiserror::Error, uniffi::Error)]
+#[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
 pub enum IshBootstrapError {
     #[error("already bootstrapped")]
     AlreadyBootstrapped,

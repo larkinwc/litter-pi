@@ -1324,6 +1324,18 @@ impl MobileClient {
         );
     }
 
+    /// Return the pi runtime control channels for `server_id`, if a
+    /// pi session is currently registered. Used by
+    /// `AppClient.send_pi_prompt` / `subscribe_pi_events`.
+    pub(crate) fn pi_channels_for_server(
+        &self,
+        server_id: &str,
+    ) -> Option<Arc<crate::pi_runtime_uniffi::PiSessionChannels>> {
+        self.sessions_read()
+            .get(server_id)
+            .and_then(|session| session.pi_channels())
+    }
+
     fn existing_active_session(&self, server_id: &str) -> Option<Arc<ServerSession>> {
         let session = self.sessions_read().get(server_id).cloned()?;
         let health_rx = session.health();
@@ -1398,6 +1410,47 @@ impl MobileClient {
         self.spawn_post_connect_warmup(server_id.clone(), session);
 
         info!("MobileClient: connected local server {server_id}");
+        Ok(server_id)
+    }
+
+    /// Connect to a local (in-process) pi runtime.
+    ///
+    /// Mirrors [`Self::connect_local`] but routes through
+    /// [`ServerSession::connect_local_pi`], which delegates to
+    /// `pi-mobile-client::start_in_process` and pipes pi's `PiEvent`
+    /// stream into the existing `ServerEvent` channel.
+    pub async fn connect_local_pi(
+        &self,
+        config: ServerConfig,
+    ) -> Result<String, TransportError> {
+        self.connect_local_pi_with_byok(config, None).await
+    }
+
+    /// Like [`Self::connect_local_pi`] but threads a BYOK pi
+    /// `PiSessionConfig` (provider, api_key, optional base URL) into
+    /// the in-process runtime so the agent loop can actually drive
+    /// turns against the configured provider.
+    pub async fn connect_local_pi_with_byok(
+        &self,
+        config: ServerConfig,
+        byok: Option<pi_mobile_client::PiSessionConfig>,
+    ) -> Result<String, TransportError> {
+        let server_id = config.server_id.clone();
+        if self.existing_active_session(server_id.as_str()).is_some() {
+            info!("MobileClient: reusing existing local pi session {server_id}");
+            return Ok(server_id);
+        }
+        self.replace_existing_session(server_id.as_str()).await;
+        let session = Arc::new(ServerSession::connect_local_pi_with_byok(config, byok).await?);
+        self.app_store
+            .upsert_server(session.config(), ServerHealthSnapshot::Connected);
+
+        self.sessions_write()
+            .insert(server_id.clone(), Arc::clone(&session));
+        self.spawn_event_reader(server_id.clone(), Arc::clone(&session));
+        self.spawn_health_reader(server_id.clone(), Arc::clone(&session));
+
+        info!("MobileClient: connected local pi server {server_id}");
         Ok(server_id)
     }
 

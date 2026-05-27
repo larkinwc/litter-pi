@@ -5,6 +5,12 @@ struct InlineVoiceButton: View {
     let isAvailable: Bool
     let onStart: () -> Void
     let onStop: () -> Void
+    /// Canonical id of the active server's agent runtime. When this
+    /// matches the pi runtime (`PiCapabilityGates.isPiRuntime`) the
+    /// gate collapses the entire button so a pi server with
+    /// `capabilities.voice = false` actually hides `voice.mic.button`
+    /// in the production app, not just in the XCUITest harness.
+    var agentRuntimeKind: String? = nil
 
     private var phase: VoiceSessionPhase? {
         session?.phase
@@ -59,8 +65,10 @@ struct InlineVoiceButton: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("voice.mic.button")
             .animation(.spring(response: 0.4, dampingFraction: 0.75), value: isActive)
             .animation(.spring(response: 0.4, dampingFraction: 0.75), value: phase)
+            .piCapabilityGate(.voice, agentRuntimeKind: agentRuntimeKind)
         }
     }
 }

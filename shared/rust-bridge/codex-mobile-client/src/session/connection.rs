@@ -25,6 +25,7 @@ use tracing::{debug, info, warn};
 
 use crate::logging::{LogLevelName, log_rust};
 use crate::session::remote_transport::{Reconnected, RemoteTransport, SessionKeepalive};
+use crate::ssh::pi_bootstrap::{SshSessionConfig, bootstrap_pi_server};
 use crate::ssh::{RemoteShell, SshBootstrapResult, SshBootstrapTransport, SshClient};
 use crate::transport::{RpcError, TransportError};
 use crate::types::AgentRuntimeKind;
@@ -42,6 +43,92 @@ pub(crate) struct SshReconnectTransport {
     pub(crate) remote_shell: RemoteShell,
     pub(crate) working_dir: Option<String>,
     pub(crate) ssh_pid: Option<Arc<StdMutex<Option<u32>>>>,
+}
+
+/// Connect-and-reconnect strategy for a remote `pi acp` runtime.
+///
+/// Mirrors `SshReconnectTransport`: the transport owns its `SshSessionConfig`
+/// and re-runs the same `bootstrap_pi_server` flow on a forced drop. The
+/// session config captured at construction time is reused verbatim — the
+/// transport never re-derives the host/user/key from the live russh handle,
+/// so any later `reconnect()` is guaranteed to talk to the same host with
+/// the same credentials.
+pub(crate) struct PiReconnectTransport {
+    pub(crate) host_config: SshSessionConfig,
+    pub(crate) bootstrap: Arc<dyn PiBootstrapFn>,
+}
+
+/// Hook used by `PiReconnectTransport` to spawn `pi acp` and connect a
+/// JSON-line client. Production callers wire this to
+/// [`bootstrap_pi_server`] via [`DefaultPiBootstrapFn`]; tests
+/// substitute a recorder so they can assert that the same
+/// `SshSessionConfig` is reused across reconnects without booting a
+/// real SSH stack.
+#[async_trait::async_trait]
+pub(crate) trait PiBootstrapFn: Send + Sync + 'static {
+    async fn run(&self, config: &SshSessionConfig) -> Result<AppServerClient, TransportError>;
+}
+
+pub(crate) struct DefaultPiBootstrapFn {
+    pub(crate) ssh_client: Arc<SshClient>,
+}
+
+#[async_trait::async_trait]
+impl PiBootstrapFn for DefaultPiBootstrapFn {
+    async fn run(&self, config: &SshSessionConfig) -> Result<AppServerClient, TransportError> {
+        let client = bootstrap_pi_server(Arc::clone(&self.ssh_client), config)
+            .await
+            .map_err(|e| TransportError::ConnectionFailed(e.to_string()))?;
+        Ok(AppServerClient::Remote(client))
+    }
+}
+
+impl PiReconnectTransport {
+    /// Build a transport for the `pi acp` runtime. Runs the initial
+    /// `bootstrap_pi_server` call eagerly so callers can hand the
+    /// returned `AppServerClient` straight to
+    /// `connect_remote_multiplexed`, while the transport retains the
+    /// config for later reconnects.
+    pub(crate) async fn connect(
+        ssh_client: Arc<SshClient>,
+        host_config: SshSessionConfig,
+    ) -> Result<(Self, AppServerClient), TransportError> {
+        let bootstrap: Arc<dyn PiBootstrapFn> = Arc::new(DefaultPiBootstrapFn { ssh_client });
+        Self::connect_with(host_config, bootstrap).await
+    }
+
+    pub(crate) async fn connect_with(
+        host_config: SshSessionConfig,
+        bootstrap: Arc<dyn PiBootstrapFn>,
+    ) -> Result<(Self, AppServerClient), TransportError> {
+        let client = bootstrap.run(&host_config).await?;
+        Ok((
+            Self {
+                host_config,
+                bootstrap,
+            },
+            client,
+        ))
+    }
+}
+
+#[async_trait::async_trait]
+impl RemoteTransport for PiReconnectTransport {
+    async fn reconnect(
+        &self,
+        _args: &RemoteAppServerConnectArgs,
+        _websocket_url: &str,
+    ) -> Result<Reconnected, TransportError> {
+        // Re-run the exact same bootstrap path with the exact same
+        // `SshSessionConfig`. The config is captured by value at
+        // construction time, so a forced drop cannot smuggle in
+        // different credentials.
+        let client = self.bootstrap.run(&self.host_config).await?;
+        Ok(Reconnected {
+            client,
+            keepalive: None,
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -509,6 +596,12 @@ pub struct ServerSession {
     ssh_client: Option<Arc<SshClient>>,
     ssh_pid: Option<Arc<StdMutex<Option<u32>>>>,
     worker_handle: tokio::task::JoinHandle<()>,
+    /// Per-session pi runtime control surface. Populated only for
+    /// sessions started via `connect_local_pi*`; remote/codex
+    /// sessions leave this `None`. Holds the captured
+    /// `PiInProcessHandle::commands_tx` clone plus the typed
+    /// `PiEvent` broadcast sender exposed to UniFFI subscribers.
+    pi_channels: Option<Arc<crate::pi_runtime_uniffi::PiSessionChannels>>,
 }
 
 #[cfg(test)]
@@ -801,6 +894,148 @@ impl ServerSession {
             ssh_client: None,
             ssh_pid: None,
             worker_handle,
+            pi_channels: None,
+        })
+    }
+
+    /// Connect to a local (in-process) pi runtime.
+    ///
+    /// Delegates to [`pi_mobile_client::start_in_process`] for the
+    /// dedicated asupersync OS thread + tokio channel bridge, then
+    /// drives the resulting `PiInProcessHandle` through the same
+    /// `ServerEvent` broadcast surface as the codex in-process path so
+    /// the rest of the mobile stack stays runtime-agnostic.
+    ///
+    /// Today the inbound `SessionCommand` plumbing is wired through but
+    /// pi does not yet speak codex's JSON-RPC shape; concrete request
+    /// translation lands in follow-up features. The shutdown path
+    /// already drops the pi handle, which in turn signals pi's
+    /// asupersync runtime to cancel in-flight work.
+    pub async fn connect_local_pi(config: ServerConfig) -> Result<Self, TransportError> {
+        Self::connect_local_pi_with_byok(config, None).await
+    }
+
+    /// Like [`Self::connect_local_pi`] but accepts an explicit pi
+    /// `PiSessionConfig` (provider, api_key, optional base URL, etc.).
+    /// `None` keeps the legacy echo-mode behavior used by the
+    /// reachability test.
+    pub async fn connect_local_pi_with_byok(
+        config: ServerConfig,
+        byok: Option<pi_mobile_client::PiSessionConfig>,
+    ) -> Result<Self, TransportError> {
+        use pi_mobile_client::{InProcessStartArgs as PiInProcessStartArgs, start_in_process};
+
+        let (health_tx, health_rx) = watch::channel(ConnectionHealth::Connecting {
+            attempt: 1,
+            max_attempts: 1,
+        });
+
+        // Snapshot the resolved base URL before `byok` is moved into
+        // `PiInProcessStartArgs`, so it can be threaded onto the
+        // `PiSessionChannels` for test-injection readback via
+        // `AppClient.pi_active_base_url`.
+        let resolved_base_url = byok.as_ref().and_then(|cfg| cfg.base_url.clone());
+        let pi_handle = start_in_process(PiInProcessStartArgs {
+            session: byok,
+            ..PiInProcessStartArgs::default()
+        });
+        let mut pi_events = pi_handle.subscribe();
+        // Clone the inbound command sender so callers (via
+        // `AppClient.send_pi_prompt`) can forward prompts into the
+        // runtime even after `pi_handle` is moved into the worker
+        // task.
+        let pi_commands_tx = pi_handle.commands_sender();
+
+        let (event_tx, _) = broadcast::channel::<ServerEvent>(256);
+        let (command_tx, mut command_rx) = mpsc::channel::<SessionCommand>(256);
+        // Typed pi event broadcast. Sized like the codex event
+        // channel so a momentarily slow listener can buffer a few
+        // events without lagging the runtime.
+        let (pi_event_tx, _) =
+            broadcast::channel::<crate::pi_runtime_uniffi::PiEvent>(256);
+        let pi_evt_tx = pi_event_tx.clone();
+
+        let worker_handle = tokio::spawn(async move {
+            // Keep the pi runtime handle alive for the lifetime of this
+            // worker. Dropping it on exit signals pi's asupersync runtime
+            // to shut down (see `pi_mobile_client::PiInProcessHandle`).
+            let _pi_handle = pi_handle;
+            loop {
+                tokio::select! {
+                    command = command_rx.recv() => {
+                        let Some(command) = command else { break; };
+                        match command {
+                            SessionCommand::Request { response_tx, .. } => {
+                                // Codex JSON-RPC shape is not yet wired
+                                // through pi. Reject so callers see a
+                                // clear transport error rather than a
+                                // silent hang. Follow-up features
+                                // populate this branch.
+                                let _ = response_tx.send(Err(RpcError::Transport(
+                                    TransportError::SendFailed(
+                                        "pi runtime does not yet handle JSON-RPC requests"
+                                            .to_string(),
+                                    ),
+                                )));
+                            }
+                            SessionCommand::Notify { response_tx, .. } => {
+                                let _ = response_tx.send(Ok(()));
+                            }
+                            SessionCommand::Resolve { response_tx, .. } => {
+                                let _ = response_tx.send(Ok(()));
+                            }
+                            SessionCommand::Reject { response_tx, .. } => {
+                                let _ = response_tx.send(Ok(()));
+                            }
+                            SessionCommand::Shutdown => break,
+                        }
+                    }
+                    event = pi_events.recv() => {
+                        match event {
+                            Ok(event) => {
+                                let typed = crate::pi_runtime_uniffi::PiEvent::from_pi(event);
+                                // Send onto the typed broadcast first
+                                // (errors only happen when there are no
+                                // subscribers, which is fine — the
+                                // events_tx clone on `ServerSession`
+                                // keeps the channel open).
+                                let _ = pi_evt_tx.send(typed);
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                                warn!("pi in-process event: lagged, skipped {skipped} events");
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
+                }
+            }
+            debug!("pi in-process session worker exited");
+        });
+
+        let _ = health_tx.send(ConnectionHealth::Connected);
+        info!(
+            "local pi server session connected: {}",
+            config.display_name
+        );
+
+        let pi_channels = Arc::new(crate::pi_runtime_uniffi::PiSessionChannels::new(
+            pi_commands_tx,
+            pi_event_tx,
+            resolved_base_url,
+        ));
+
+        Ok(Self {
+            config,
+            health_tx,
+            health_rx,
+            command_tx,
+            runtime_command_txs: std::collections::HashMap::new(),
+            runtime_transports: Vec::new(),
+            event_tx,
+            ssh_client: None,
+            ssh_pid: None,
+            worker_handle,
+            pi_channels: Some(pi_channels),
         })
     }
 
@@ -900,6 +1135,7 @@ impl ServerSession {
             ssh_client: extras.ssh_client,
             ssh_pid: extras.ssh_pid,
             worker_handle,
+            pi_channels: None,
         })
     }
 
@@ -940,6 +1176,15 @@ impl ServerSession {
     /// Get a watch receiver for health state changes.
     pub fn health(&self) -> watch::Receiver<ConnectionHealth> {
         self.health_rx.clone()
+    }
+
+    /// Access the per-session pi runtime control surface, if this is
+    /// a pi session (started via `connect_local_pi*`). Returns
+    /// `None` for codex/remote sessions.
+    pub fn pi_channels(
+        &self,
+    ) -> Option<Arc<crate::pi_runtime_uniffi::PiSessionChannels>> {
+        self.pi_channels.clone()
     }
 
     pub fn runtime_kinds(&self) -> Vec<AgentRuntimeKind> {
@@ -1766,8 +2011,24 @@ fn route_app_server_event(
             append_android_debug_log(&format!("disconnected={message}"));
             let _ = health_tx.send(ConnectionHealth::Disconnected);
         }
+        AppServerEvent::RawServerRequest { method, .. } => {
+            warn!("event: ignoring raw remote app-server request method={method}");
+        }
+        AppServerEvent::RawServerNotification { method, .. } => {
+            tracing::debug!("event: ignoring raw remote app-server notification method={method}");
+        }
     }
 }
+
+// NOTE: a prior version of this file routed pi events into
+// `ServerEvent::LegacyNotification { method: "pi/..." , ... }` so
+// platforms could observe them through the codex event subscription.
+// That violated the drift guardrail "do not parse upstream wire-format
+// strings in Swift/Kotlin". Pi events now flow through the typed
+// broadcast on `crate::pi_runtime_uniffi::PiSessionChannels` exposed
+// via `AppClient.subscribe_pi_events`. See
+// `crate::pi_runtime_uniffi::PiEvent::from_pi` for the typed
+// translation invoked inside the pi worker loop.
 
 fn route_in_process_event(
     event_tx: &broadcast::Sender<ServerEvent>,
@@ -1864,6 +2125,7 @@ impl ServerSession {
             ssh_client: None,
             ssh_pid: None,
             worker_handle,
+            pi_channels: None,
         }
     }
 
@@ -1900,6 +2162,7 @@ impl ServerSession {
             ssh_client: None,
             ssh_pid: None,
             worker_handle,
+            pi_channels: None,
         }
     }
 }
@@ -2567,5 +2830,75 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(codex_home);
+    }
+
+    #[tokio::test]
+    async fn connect_local_pi_returns_session_and_routes_events() {
+        let config = ServerConfig {
+            server_id: "pi-local".to_string(),
+            display_name: "Local pi".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            websocket_url: None,
+            is_local: true,
+            tls: false,
+        };
+
+        let session = ServerSession::connect_local_pi(config)
+            .await
+            .expect("connect_local_pi succeeds");
+        assert_eq!(session.config.server_id, "pi-local");
+        drop(session);
+    }
+
+    /// Send a `Command::Prompt` through the per-session
+    /// `PiSessionChannels::commands_tx` and confirm it surfaces on
+    /// the typed `PiEvent` broadcast (the runtime is in echo mode, so
+    /// the bridge round-trips the prompt as `PromptReceived`). This
+    /// proves the prompt-in / typed-events-out wiring used by
+    /// `AppClient.send_pi_prompt` / `subscribe_pi_events` without
+    /// requiring a live pi session against a real provider.
+    #[tokio::test]
+    async fn pi_session_channels_round_trip_prompt_to_typed_event() {
+        let config = ServerConfig {
+            server_id: "pi-local-prompt".to_string(),
+            display_name: "Local pi".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            websocket_url: None,
+            is_local: true,
+            tls: false,
+        };
+
+        let session = ServerSession::connect_local_pi(config)
+            .await
+            .expect("connect_local_pi succeeds");
+        let channels = session
+            .pi_channels()
+            .expect("pi session exposes PiSessionChannels");
+
+        let mut events_rx = channels.events_tx.subscribe();
+
+        channels
+            .commands_tx
+            .send(pi_mobile_client::Command::Prompt(
+                "hello pi".to_string(),
+            ))
+            .await
+            .expect("send prompt via captured commands_tx");
+
+        let received = tokio::time::timeout(Duration::from_secs(2), events_rx.recv())
+            .await
+            .expect("typed PiEvent arrived within timeout")
+            .expect("broadcast not closed");
+
+        match received {
+            crate::pi_runtime_uniffi::PiEvent::PromptReceived { text } => {
+                assert_eq!(text, "hello pi");
+            }
+            other => panic!("expected PromptReceived, got {other:?}"),
+        }
+
+        drop(session);
     }
 }

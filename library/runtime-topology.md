@@ -1,0 +1,141 @@
+# pi-mobile-client runtime topology
+
+`pi-mobile-client::server::start_in_process` constructs an `asupersync`
+runtime on a dedicated OS thread named `pi-asupersync` and attaches a
+platform-appropriate I/O reactor before pi's HTTP client (used by every
+provider, including `AnthropicProvider` over the BYOK proxy) issues any
+sockets. Without an attached reactor the agent loop hangs forever on the
+first request.
+
+## Platform reactor matrix
+
+`asupersync::runtime::reactor::create_reactor()` selects the backend:
+
+| Target                                          | Reactor backend  | Module             |
+|------------------------------------------------|------------------|--------------------|
+| `target_os = "linux"`                          | `EpollReactor`   | `reactor/epoll.rs` |
+| `target_os = "android"` (Litter patch)         | `EpollReactor`   | `reactor/epoll.rs` |
+| `target_os = "macos"` and other BSDs           | `KqueueReactor`  | `reactor/kqueue.rs`|
+| `target_os = "ios"` (Litter patch)             | `KqueueReactor`  | `reactor/kqueue.rs`|
+| `target_os = "windows"`                        | `IocpReactor`    | `reactor/windows.rs`|
+| `target_arch = "wasm32"`                       | `BrowserReactor` | `reactor/browser.rs`|
+| anything else                                  | returns `io::ErrorKind::Unsupported` | — |
+
+iOS shares the BSD-family kqueue ABI with macOS, and Android shares the
+Linux epoll ABI, so each platform reuses the existing backend
+implementation unchanged. The only edits in our vendored asupersync are
+`#[cfg(...)]` predicate widenings.
+
+## Vendored asupersync rationale
+
+Upstream `asupersync = 0.3.2` does not include iOS or Android in its
+reactor cfg gates and does not expose a public extension API for
+plugging in an alternative reactor (`Events::push` is `pub(crate)` and
+there is no tokio adapter). The minimum diff to make `create_reactor()`
+work on `target_os = "ios"` and `target_os = "android"` is a handful of
+`#[cfg(...)]` predicate edits in
+`src/runtime/reactor/mod.rs`, plus a one-line widening of the
+`deny(dead_code)` lint gate in `src/lib.rs` (some macOS-only helpers in
+`runtime/resource_monitor.rs` are not callable from the iOS slice).
+
+User-approved approach: **vendor asupersync 0.3.2 as a git submodule
+under `shared/third_party/asupersync/` and patch in place**. The patch
+is applied on the `litter/ios-android-reactor-cfg` branch in the
+submodule and is kept as small as possible (cfg-attr edits only, no API
+surface changes).
+
+Both `Cargo.toml` (this workspace) and `shared/rust-bridge/Cargo.toml`
+(the bridge workspace) carry a matching `[patch.crates-io] asupersync =
+{ path = "..." }` entry so `pi-server-runner` and `pi-mobile-client`
+resolve the same patched copy.
+
+## Upstream PR plan
+
+We intend to file an upstream PR against
+`Dicklesworthstone/asupersync` proposing:
+
+1. Adding `target_os = "ios"` next to `target_os = "macos"` on every
+   kqueue-flavoured cfg gate in `src/runtime/reactor/mod.rs`.
+2. Adding `target_os = "android"` next to `target_os = "linux"` on
+   every epoll-flavoured cfg gate.
+3. Optionally exposing a `pub` extension point on `Events::push` plus a
+   tokio adapter so downstream embedders can wire a custom reactor
+   without forking the crate (this would let us remove the
+   `[patch.crates-io]` entry entirely).
+
+Until that lands and is released, the vendored copy stays in tree.
+
+## Cross-client OAuth reuse (claude-credentials import)
+
+To re-use an existing Claude Code Anthropic OAuth credential without a
+fresh interactive sign-in, run
+`pi-server-runner --import-claude-credentials --credentials-path <PATH>`
+(or set `CLAUDE_CREDENTIALS_JSON_PATH`). The runner parses the Claude
+Code JSON (`access_token`, `refresh_token`, ISO 8601 `expired`),
+stamps pi's anthropic `client_id` + `token_url`, and writes the
+credential under the `anthropic` provider key in pi's `auth.json` via
+the shared `AuthStorage` file-locking path. Existing non-anthropic
+entries are preserved. Tokens never appear in logs — only a redacted
+summary (provider, email, expires-in-ms) is emitted.
+
+## Test gotcha: `PI_ANTHROPIC_OAUTH_TOKEN_URL`
+
+`pi_agent_rust::auth::refresh_anthropic_oauth_token` resolves the token
+endpoint via the process-global `PI_ANTHROPIC_OAUTH_TOKEN_URL` env var
+(falling back to the hard-coded Anthropic URL). It does not consult the
+`token_url` field on the stored `AuthCredential::OAuth`, so any
+`pi-mobile-client` test that needs to redirect the refresh path at a
+local one-shot HTTP mock must mutate that env var. The two refresh
+tests in `pi-mobile-client/src/auth/anthropic_oauth.rs`
+(`refresh_rotates_expired_oauth_token_in_storage` and
+`refresh_with_invalid_token_emits_failed_and_invalidates_credential`)
+are therefore gated with
+`#[serial_test::serial(pi_anthropic_oauth_token_url_env)]` so they
+cannot race on that env var; `cargo test -p pi-mobile-client refresh_`
+now runs without `--test-threads=1`. If you add another test that sets
+`PI_ANTHROPIC_OAUTH_TOKEN_URL`, gate it with the same serial key.
+
+## RemoteAppServerClient JSON-RPC escape hatch (ACP routing)
+
+Upstream `codex_app_server_client::RemoteAppServerClient::request` only routes
+typed `ClientRequest` values whose `method` discriminant is part of the codex
+enum. Pi's ACP surface (`session/new`, `session/prompt`, ...) is not in that
+enum, so dispatching ACP frames through `request()` would either panic or
+silently drop them.
+
+`patches/codex/remote-app-server-jsonrpc-escape-hatch.patch` adds:
+
+```rust
+RemoteAppServerClient::send_raw_request(
+    method: &str,
+    params: Option<serde_json::Value>,
+) -> IoResult<RequestResult>
+```
+
+The implementation hangs a new `RemoteClientCommand::RawRequest` off the same
+worker loop that drives typed requests, mints a unique
+`RequestId::String("raw-<n>")` from a per-client atomic counter, writes a
+`JSONRPCMessage::Request` envelope onto the wire, and routes the response
+through the existing `pending_requests` table. Callers receive the raw
+`serde_json::Value` result (or `JSONRPCErrorError`) verbatim — no typed
+decoding, no method-namespace validation.
+
+### When to use this
+
+- **Yes:** non-Codex JSON-RPC methods that need to ride the same connection
+  as Codex traffic. The pi-server bootstrap path
+  (`ssh::pi_bootstrap`) uses it for ACP methods, and alleycat side-channels
+  can use it for their own vendor methods.
+- **No:** anything whose `method` already maps to an upstream `ClientRequest`
+  variant. Use `request()` / `request_typed()` so the upstream wire-format
+  contract stays in one place.
+
+The escape hatch is intentionally minimal — do not grow it into a typed ACP
+surface. Typed ACP request/response shapes belong in `pi-mobile-client` on
+the caller side, layered on top of the raw envelope.
+
+Verified by
+`codex_mobile_client::ssh::pi_bootstrap::send_raw_request_round_trips_acp_session_new`,
+which stands up a fake JSON-line server, asserts the outbound frame carries
+`method: "session/new"` plus the caller params, and checks the server result
+is returned verbatim through `send_raw_request`.

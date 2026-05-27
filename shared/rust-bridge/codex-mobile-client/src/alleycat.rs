@@ -17,11 +17,291 @@ use tracing::{debug, info, warn};
 
 use crate::session::remote_transport::{Reconnected, RemoteTransport, SessionKeepalive};
 use crate::transport::TransportError;
-use crate::types::AgentRuntimeKind;
+use crate::types::AgentRuntimeKind as AgentRuntimeKindId;
+
+/// Typed enum form of the canonical runtime kinds litter knows about,
+/// including the `AlleycatAgentRuntimeKind::Pi` arm used to gate Pi
+/// runtime behavior across mobile (kotlin
+/// `AlleycatAgentRuntimeKind.Pi` / `PI`). The stringly-typed
+/// [`crate::types::AgentRuntimeKind`] remains the public boundary type
+/// used across UniFFI (so new alleycat-advertised agents work without
+/// a litter release), but features that need typed pattern-matching —
+/// e.g. wiring an in-process pi runtime — go through this enum.
+///
+/// The UniFFI export name is `AlleycatAgentRuntimeKind` to avoid a
+/// symbol clash with the iOS Swift-side `AgentRuntimeKind` typealias
+/// (and to keep the Android Kotlin reference unambiguous as well).
+///
+/// `serde` round-trips through the canonical lowercase id (`"codex"`,
+/// `"pi"`, `"claude"`, …), matching the stringly-typed boundary value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
+pub enum AlleycatAgentRuntimeKind {
+    #[serde(rename = "codex")]
+    Codex,
+    #[serde(rename = "pi")]
+    Pi,
+    #[serde(rename = "amp")]
+    Amp,
+    #[serde(rename = "opencode")]
+    Opencode,
+    #[serde(rename = "claude")]
+    Claude,
+    #[serde(rename = "droid")]
+    Droid,
+    #[serde(rename = "hermes")]
+    Hermes,
+}
+
+impl AlleycatAgentRuntimeKind {
+    /// Stable lowercase id (matches the `serde` rename) used for the
+    /// stringly-typed UniFFI boundary value.
+    pub fn as_id(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::Pi => "pi",
+            Self::Amp => "amp",
+            Self::Opencode => "opencode",
+            Self::Claude => "claude",
+            Self::Droid => "droid",
+            Self::Hermes => "hermes",
+        }
+    }
+
+    /// Convert to the stringly-typed boundary id.
+    pub fn into_id(self) -> AgentRuntimeKindId {
+        self.as_id().to_owned()
+    }
+}
 
 pub const ALLEYCAT_PROTOCOL_VERSION: u32 = 1;
 pub const ALLEYCAT_ALPN: &[u8] = b"alleycat/1";
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
+
+/// Litter-side cached manifest derived from an alleycat host's
+/// `list_agents` response after a successful pair. Persisted to disk
+/// by `pi-server-runner --alleycat-pair`, consumed by mobile platform
+/// code (and by the alleycat-path validator) to decide which agent
+/// runtime + capability flags apply to each advertised host entry.
+///
+/// This is intentionally distinct from the wire-format
+/// [`AgentInfo`] shape: it carries litter's typed runtime kind
+/// (`agent_runtime_kind`) and the small, behavior-gating capability
+/// set the rest of the app actually branches on (`voice`, `plans`,
+/// `tool_exec`, `uses_direct_codex_port`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LitterAlleycatManifest {
+    /// Schema version of the manifest envelope; bump when the wire
+    /// shape changes.
+    pub version: u32,
+    /// Iroh endpoint id of the paired alleycat host.
+    pub host_id: String,
+    /// Optional human-friendly host name from the pair payload (e.g.
+    /// `studio.local`). Useful for UI labels.
+    pub host_name: Option<String>,
+    /// One entry per advertised agent on this host. Pi specifically
+    /// is what `remote-pi-alleycat-advertisement` cares about, but the
+    /// shape is generic so other runtimes (Codex, Amp, Claude, …) can
+    /// land alongside it without further plumbing.
+    pub hosts: Vec<LitterAlleycatManifestEntry>,
+}
+
+/// One row in the cached litter alleycat manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LitterAlleycatManifestEntry {
+    /// Raw alleycat agent name, e.g. `"pi"`, `"codex"`.
+    pub agent_name: String,
+    /// Human-friendly display name from the host (`"Pi"`, `"Codex"`).
+    pub agent_display_name: String,
+    /// Typed runtime kind. Pi entries always serialize as `"Pi"` so
+    /// validators can `jq '.hosts[] | select(.agent_runtime_kind=="Pi")'`.
+    pub agent_runtime_kind: LitterManifestRuntimeKind,
+    /// Mirrors the parsed pair payload's host id so each manifest row
+    /// is self-contained.
+    pub host_id: String,
+    /// Mirrors the parsed pair payload's optional host name.
+    pub host_name: Option<String>,
+    /// Wire format the agent advertised (websocket vs jsonl).
+    pub wire: LitterManifestWire,
+    /// Whether the host reported the agent as ready to accept turns.
+    pub available: bool,
+    /// Behavior-gating flags used by the mobile UI + runner to decide
+    /// whether to surface voice/plans/tool exec controls and whether
+    /// to route via the direct codex port. The four flags are the
+    /// canonical capability set defined by VAL-REM-009.
+    pub capabilities: LitterManifestCapabilities,
+}
+
+/// Wire format on the litter manifest side. Distinct from
+/// [`AgentWireWire`] (the alleycat-wire decode shape) so we can
+/// stabilise the manifest JSON without coupling to upstream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LitterManifestWire {
+    Websocket,
+    Jsonl,
+}
+
+impl From<AgentWire> for LitterManifestWire {
+    fn from(value: AgentWire) -> Self {
+        match value {
+            AgentWire::Websocket => LitterManifestWire::Websocket,
+            AgentWire::Jsonl => LitterManifestWire::Jsonl,
+        }
+    }
+}
+
+/// Behavior-gating capabilities recorded in the litter manifest. Per
+/// VAL-REM-009 a Pi entry must satisfy `voice = false`, `plans = false`,
+/// `tool_exec = true`, `uses_direct_codex_port = false`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LitterManifestCapabilities {
+    pub voice: bool,
+    pub plans: bool,
+    pub tool_exec: bool,
+    pub uses_direct_codex_port: bool,
+}
+
+impl LitterManifestCapabilities {
+    /// Default capability set for a given runtime kind. Used when an
+    /// alleycat host does not advertise rich `AgentCapabilities` of
+    /// its own. Pi specifically is the case `remote-pi-alleycat-
+    /// advertisement` cares about.
+    pub fn defaults_for(kind: LitterManifestRuntimeKind) -> Self {
+        match kind {
+            LitterManifestRuntimeKind::Pi => Self {
+                voice: false,
+                plans: false,
+                tool_exec: true,
+                uses_direct_codex_port: false,
+            },
+            LitterManifestRuntimeKind::Codex => Self {
+                voice: true,
+                plans: true,
+                tool_exec: true,
+                uses_direct_codex_port: true,
+            },
+            LitterManifestRuntimeKind::Amp
+            | LitterManifestRuntimeKind::Opencode
+            | LitterManifestRuntimeKind::Claude
+            | LitterManifestRuntimeKind::Droid
+            | LitterManifestRuntimeKind::Hermes
+            | LitterManifestRuntimeKind::Other => Self {
+                voice: false,
+                plans: false,
+                tool_exec: true,
+                uses_direct_codex_port: false,
+            },
+        }
+    }
+}
+
+/// Manifest-side runtime kind. Serialised with capitalised variant
+/// names (`"Pi"`, `"Codex"`, …) so validators can `jq` on a stable
+/// human-readable label that matches the Rust enum variant.
+///
+/// Distinct from [`AlleycatAgentRuntimeKind`], which uses lowercase
+/// canonical ids on the wire (`"pi"`) — that one stays for cross-
+/// platform UniFFI signalling; this one is purely for the cached
+/// manifest payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LitterManifestRuntimeKind {
+    Codex,
+    Pi,
+    Amp,
+    Opencode,
+    Claude,
+    Droid,
+    Hermes,
+    Other,
+}
+
+impl From<AlleycatAgentRuntimeKind> for LitterManifestRuntimeKind {
+    fn from(kind: AlleycatAgentRuntimeKind) -> Self {
+        match kind {
+            AlleycatAgentRuntimeKind::Codex => LitterManifestRuntimeKind::Codex,
+            AlleycatAgentRuntimeKind::Pi => LitterManifestRuntimeKind::Pi,
+            AlleycatAgentRuntimeKind::Amp => LitterManifestRuntimeKind::Amp,
+            AlleycatAgentRuntimeKind::Opencode => LitterManifestRuntimeKind::Opencode,
+            AlleycatAgentRuntimeKind::Claude => LitterManifestRuntimeKind::Claude,
+            AlleycatAgentRuntimeKind::Droid => LitterManifestRuntimeKind::Droid,
+            AlleycatAgentRuntimeKind::Hermes => LitterManifestRuntimeKind::Hermes,
+        }
+    }
+}
+
+impl LitterManifestRuntimeKind {
+    /// Map a free-form agent name/display-name pair to a manifest
+    /// runtime kind, going through the same canonicalisation rules
+    /// as [`agent_runtime_kind`]. Unknown agents collapse to
+    /// `Other` so the manifest stays self-describing.
+    pub fn from_agent(name: &str, display_name: &str) -> Self {
+        match agent_runtime_kind(name, display_name).as_deref() {
+            Some("codex") => LitterManifestRuntimeKind::Codex,
+            Some("pi") => LitterManifestRuntimeKind::Pi,
+            Some("amp") => LitterManifestRuntimeKind::Amp,
+            Some("opencode") => LitterManifestRuntimeKind::Opencode,
+            Some("claude") => LitterManifestRuntimeKind::Claude,
+            Some("droid") => LitterManifestRuntimeKind::Droid,
+            Some("hermes") => LitterManifestRuntimeKind::Hermes,
+            _ => LitterManifestRuntimeKind::Other,
+        }
+    }
+}
+
+/// Schema version baked into every new [`LitterAlleycatManifest`].
+pub const LITTER_ALLEYCAT_MANIFEST_VERSION: u32 = 1;
+
+/// Build the litter-side cached manifest from a parsed pair payload
+/// and the agent list returned by [`list_agents`]. Manifest-side
+/// capability flags fall back to runtime-specific defaults when the
+/// alleycat host does not advertise its own rich [`AgentCapabilities`].
+/// Pi entries always end up with the VAL-REM-009 flag set
+/// (`voice=false, plans=false, tool_exec=true,
+/// uses_direct_codex_port=false`).
+pub fn build_litter_manifest(
+    params: &ParsedPairPayload,
+    agents: &[AgentInfo],
+) -> LitterAlleycatManifest {
+    let hosts = agents
+        .iter()
+        .map(|agent| {
+            let kind = LitterManifestRuntimeKind::from_agent(&agent.name, &agent.display_name);
+            // Pi specifically MUST use the canonical default flag set
+            // regardless of what the alleycat host advertises, since
+            // VAL-REM-009 pins the four-flag shape verbatim. Other
+            // runtimes can take advantage of any richer capability
+            // metadata when the host advertises it.
+            let capabilities = if matches!(kind, LitterManifestRuntimeKind::Pi) {
+                LitterManifestCapabilities::defaults_for(kind)
+            } else if let Some(caps) = agent.capabilities.as_ref() {
+                LitterManifestCapabilities {
+                    voice: false,
+                    plans: false,
+                    tool_exec: true,
+                    uses_direct_codex_port: caps.uses_direct_codex_port,
+                }
+            } else {
+                LitterManifestCapabilities::defaults_for(kind)
+            };
+            LitterAlleycatManifestEntry {
+                agent_name: agent.name.clone(),
+                agent_display_name: agent.display_name.clone(),
+                agent_runtime_kind: kind,
+                host_id: params.node_id.clone(),
+                host_name: params.host_name.clone(),
+                wire: LitterManifestWire::from(agent.wire),
+                available: agent.available,
+                capabilities,
+            }
+        })
+        .collect();
+    LitterAlleycatManifest {
+        version: LITTER_ALLEYCAT_MANIFEST_VERSION,
+        host_id: params.node_id.clone(),
+        host_name: params.host_name.clone(),
+        hosts,
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedPairPayload {
@@ -74,7 +354,7 @@ pub struct AgentCapabilities {
 /// stable ids. Anything else falls through to the agent's own
 /// lowercased name (or display name if name is empty), so new agents
 /// advertised by alleycat work without a litter release.
-pub fn agent_runtime_kind(name: &str, display_name: &str) -> Option<AgentRuntimeKind> {
+pub fn agent_runtime_kind(name: &str, display_name: &str) -> Option<AgentRuntimeKindId> {
     let name = name.trim().to_ascii_lowercase();
     let display_name = display_name.trim().to_ascii_lowercase();
     let candidate = if name.is_empty() {
@@ -1068,5 +1348,131 @@ mod tests {
     #[allow(dead_code)]
     fn alleycat_reconnect_transport_coerces_to_trait_object(transport: AlleycatReconnectTransport) {
         let _erased: Arc<dyn RemoteTransport> = Arc::new(transport);
+    }
+
+    #[test]
+    fn agent_runtime_kind_pi_roundtrip() {
+        let json = serde_json::to_value(AlleycatAgentRuntimeKind::Pi).expect("serialize");
+        assert_eq!(json, serde_json::json!("pi"));
+
+        let parsed: AlleycatAgentRuntimeKind =
+            serde_json::from_value(json).expect("deserialize");
+        assert_eq!(parsed, AlleycatAgentRuntimeKind::Pi);
+
+        // The typed enum must align with the canonicalized stringly-typed
+        // id produced by `agent_runtime_kind()` for the same agent names.
+        assert_eq!(AlleycatAgentRuntimeKind::Pi.as_id(), "pi");
+        assert_eq!(
+            agent_runtime_kind("pi", "pi"),
+            Some(AlleycatAgentRuntimeKind::Pi.into_id())
+        );
+    }
+
+    fn sample_pair_payload(host_name: Option<&str>) -> ParsedPairPayload {
+        let key = iroh::SecretKey::generate();
+        ParsedPairPayload {
+            version: ALLEYCAT_PROTOCOL_VERSION,
+            node_id: key.public().to_string(),
+            token: "deadbeef".to_string(),
+            relay: None,
+            host_name: host_name.map(str::to_string),
+        }
+    }
+
+    fn pi_agent_info(available: bool) -> AgentInfo {
+        AgentInfo {
+            name: "pi".to_string(),
+            display_name: "Pi".to_string(),
+            wire: AgentWire::Jsonl,
+            available,
+            presentation: None,
+            capabilities: None,
+        }
+    }
+
+    #[test]
+    fn build_manifest_pi_entry_has_required_capability_flags() {
+        let params = sample_pair_payload(Some("studio.local"));
+        let manifest = build_litter_manifest(&params, &[pi_agent_info(true)]);
+
+        assert_eq!(manifest.version, LITTER_ALLEYCAT_MANIFEST_VERSION);
+        assert_eq!(manifest.host_id, params.node_id);
+        assert_eq!(manifest.host_name.as_deref(), Some("studio.local"));
+        assert_eq!(manifest.hosts.len(), 1);
+
+        let entry = &manifest.hosts[0];
+        assert_eq!(entry.agent_runtime_kind, LitterManifestRuntimeKind::Pi);
+        assert_eq!(entry.host_id, params.node_id);
+        assert_eq!(entry.wire, LitterManifestWire::Jsonl);
+        assert!(entry.available);
+        let caps = entry.capabilities;
+        assert!(!caps.voice, "pi voice must be false");
+        assert!(!caps.plans, "pi plans must be false");
+        assert!(caps.tool_exec, "pi tool_exec must be true");
+        assert!(
+            !caps.uses_direct_codex_port,
+            "pi uses_direct_codex_port must be false"
+        );
+    }
+
+    #[test]
+    fn build_manifest_pi_capabilities_ignore_host_overrides() {
+        // Even if the alleycat host advertised aggressive capability
+        // flags for the pi agent, the litter manifest must coerce them
+        // to the VAL-REM-009 canonical set.
+        let params = sample_pair_payload(None);
+        let mut agent = pi_agent_info(true);
+        agent.capabilities = Some(AgentCapabilities {
+            locks_reasoning_effort_after_activity: false,
+            visible_modes: None,
+            supports_ssh_bridge: true,
+            uses_direct_codex_port: true,
+            supports_thread_permission_overrides: true,
+            reports_effective_thread_permissions: true,
+        });
+        let manifest = build_litter_manifest(&params, &[agent]);
+        let caps = manifest.hosts[0].capabilities;
+        assert!(!caps.voice);
+        assert!(!caps.plans);
+        assert!(caps.tool_exec);
+        assert!(
+            !caps.uses_direct_codex_port,
+            "pi entry must not opt into the direct codex port even when host advertises it"
+        );
+    }
+
+    #[test]
+    fn build_manifest_serializes_pi_runtime_kind_as_pi() {
+        let params = sample_pair_payload(None);
+        let manifest = build_litter_manifest(&params, &[pi_agent_info(true)]);
+        let json = serde_json::to_value(&manifest).expect("serialize manifest");
+        assert_eq!(
+            json["hosts"][0]["agent_runtime_kind"], "Pi",
+            "validators jq for agent_runtime_kind==\"Pi\""
+        );
+        assert_eq!(json["hosts"][0]["capabilities"]["voice"], false);
+        assert_eq!(json["hosts"][0]["capabilities"]["plans"], false);
+        assert_eq!(json["hosts"][0]["capabilities"]["tool_exec"], true);
+        assert_eq!(
+            json["hosts"][0]["capabilities"]["uses_direct_codex_port"],
+            false
+        );
+    }
+
+    #[test]
+    fn litter_manifest_runtime_kind_from_agent_handles_known_and_unknown() {
+        assert_eq!(
+            LitterManifestRuntimeKind::from_agent("pi", "Pi"),
+            LitterManifestRuntimeKind::Pi
+        );
+        assert_eq!(
+            LitterManifestRuntimeKind::from_agent("codex", "Codex"),
+            LitterManifestRuntimeKind::Codex
+        );
+        assert_eq!(
+            LitterManifestRuntimeKind::from_agent("devin", "Devin"),
+            LitterManifestRuntimeKind::Other,
+            "unknown agents collapse to Other so the manifest stays self-describing"
+        );
     }
 }
