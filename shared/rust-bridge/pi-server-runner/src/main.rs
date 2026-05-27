@@ -353,6 +353,16 @@ enum TranscriptLine {
     TurnError {
         message: String,
     },
+    /// Typed turn state transition (VAL-NFR-003). Emitted by the
+    /// in-process runtime alongside the legacy `TurnError` /
+    /// `TurnComplete` lines.
+    TurnStateChanged {
+        state: &'static str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        retryable: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
     ShuttingDown,
     AuthState {
         /// Mirrors the variants of
@@ -871,6 +881,25 @@ fn render(event: PiEvent) -> (TranscriptLine, Terminal) {
             TranscriptLine::TurnError { message },
             Terminal::Failure,
         ),
+        PiEvent::TurnStateChanged { state } => {
+            use pi_mobile_client::PiTurnState as S;
+            let (label, retryable, message) = match state {
+                S::Idle => ("idle", None, None),
+                S::Streaming => ("streaming", None, None),
+                S::Completed => ("completed", None, None),
+                S::Errored { retryable, message } => {
+                    ("errored", Some(retryable), Some(message))
+                }
+            };
+            (
+                TranscriptLine::TurnStateChanged {
+                    state: label,
+                    retryable,
+                    message,
+                },
+                Terminal::Continue,
+            )
+        }
         PiEvent::ShuttingDown => (TranscriptLine::ShuttingDown, Terminal::Continue),
     }
 }

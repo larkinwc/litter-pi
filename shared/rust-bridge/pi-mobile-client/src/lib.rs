@@ -16,6 +16,7 @@
 // presents the narrow API described in `architecture.md`.
 mod runtime_bridge;
 mod server;
+mod turn_state;
 
 // Stub modules that other features in this milestone will fill in. They
 // are declared (so the file tree matches the architecture doc) but not
@@ -32,3 +33,4 @@ pub use server::{
     Command, InProcessStartArgs, PiEvent, PiInProcessHandle, PiSessionConfig, ToolFactoryKind,
     start_in_process,
 };
+pub use turn_state::{PiTurnState, classify_retryable};

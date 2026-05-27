@@ -181,7 +181,35 @@ pub enum RemoteTranscriptLine {
     TurnError {
         message: String,
     },
+    /// Typed turn state transition. The SSH remote driver emits this
+    /// alongside the legacy `TurnError` / `TurnComplete` lines so the
+    /// validation contract (VAL-NFR-003) can pin against
+    /// `state == "errored"` and `retryable == true` for mid-turn
+    /// transport drops without parsing the free-form `message`.
+    TurnStateChanged {
+        state: &'static str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        retryable: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
     Disconnected,
+}
+
+impl RemoteTranscriptLine {
+    /// Build a `TurnStateChanged` line from a raw error message,
+    /// classifying retryability via the shared `pi_mobile_client`
+    /// classifier so the iOS / Android UI and the SSH driver agree on
+    /// what counts as a retryable transport drop.
+    pub(crate) fn errored(message: impl Into<String>) -> Self {
+        let message = message.into();
+        let retryable = pi_mobile_client::classify_retryable(&message);
+        RemoteTranscriptLine::TurnStateChanged {
+            state: "errored",
+            retryable: Some(retryable),
+            message: Some(message),
+        }
+    }
 }
 
 /// Emit a transcript line to stdout and (when set) the
@@ -420,11 +448,27 @@ pub async fn drive_remote_ssh(args: RemoteSshArgs) -> ExitCode {
     )
     .await;
     let exit = match outcome {
-        Ok(Ok(())) => ExitCode::SUCCESS,
+        Ok(Ok(())) => {
+            let _ = emit_remote_line(
+                &mut events_file,
+                &RemoteTranscriptLine::TurnStateChanged {
+                    state: "completed",
+                    retryable: None,
+                    message: None,
+                },
+            )
+            .await;
+            ExitCode::SUCCESS
+        }
         Ok(Err(msg)) => {
             let _ = emit_remote_line(
                 &mut events_file,
                 &RemoteTranscriptLine::TurnError { message: msg.clone() },
+            )
+            .await;
+            let _ = emit_remote_line(
+                &mut events_file,
+                &RemoteTranscriptLine::errored(msg.clone()),
             )
             .await;
             eprintln!("pi-server-runner: {msg}");
@@ -438,6 +482,11 @@ pub async fn drive_remote_ssh(args: RemoteSshArgs) -> ExitCode {
             let _ = emit_remote_line(
                 &mut events_file,
                 &RemoteTranscriptLine::TurnError { message: msg.clone() },
+            )
+            .await;
+            let _ = emit_remote_line(
+                &mut events_file,
+                &RemoteTranscriptLine::errored(msg.clone()),
             )
             .await;
             eprintln!("pi-server-runner: {msg}");
@@ -957,6 +1006,38 @@ mod tests {
                 Some(v) => std::env::set_var("HOME", v),
                 None => std::env::remove_var("HOME"),
             }
+        }
+    }
+
+    /// VAL-NFR-003 regression: the `errored` helper must classify
+    /// transport drops as retryable and 401/403 as non-retryable so
+    /// the iOS / Android UI agrees with the SSH remote driver on
+    /// what the typed `TurnStateChanged` line means.
+    #[test]
+    fn errored_helper_classifies_retryability() {
+        let line = RemoteTranscriptLine::errored("connection reset by peer");
+        match line {
+            RemoteTranscriptLine::TurnStateChanged {
+                state,
+                retryable,
+                message,
+            } => {
+                assert_eq!(state, "errored");
+                assert_eq!(retryable, Some(true));
+                assert_eq!(message.as_deref(), Some("connection reset by peer"));
+            }
+            other => panic!("unexpected line: {other:?}"),
+        }
+
+        let line = RemoteTranscriptLine::errored("HTTP 401 Unauthorized");
+        match line {
+            RemoteTranscriptLine::TurnStateChanged {
+                state, retryable, ..
+            } => {
+                assert_eq!(state, "errored");
+                assert_eq!(retryable, Some(false));
+            }
+            other => panic!("unexpected line: {other:?}"),
         }
     }
 

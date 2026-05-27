@@ -456,7 +456,10 @@ struct ContentView: View {
                 LitterTheme.backgroundGradient.ignoresSafeArea()
 
                 #if DEBUG
-                if ConversationDisplayUITestHarnessView.isEnabled {
+                if PiRetryTurnUITestHarnessView.isEnabled {
+                    PiRetryTurnUITestHarnessView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if ConversationDisplayUITestHarnessView.isEnabled {
                     ConversationDisplayUITestHarnessView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -473,7 +476,8 @@ struct ContentView: View {
                 #endif
 
                 #if DEBUG
-                if !ConversationDisplayUITestHarnessView.isEnabled {
+                if !ConversationDisplayUITestHarnessView.isEnabled
+                    && !PiRetryTurnUITestHarnessView.isEnabled {
                     standardOverlays
                 }
                 #else

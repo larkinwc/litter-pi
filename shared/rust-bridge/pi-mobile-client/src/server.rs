@@ -70,6 +70,11 @@ pub enum PiEvent {
     TurnComplete,
     /// The agent turn failed; carries a human-readable error message.
     TurnError { message: String },
+    /// Typed turn state transition. Emitted alongside the legacy
+    /// `PromptReceived` / `TurnComplete` / `TurnError` events so the
+    /// platform UI can observe `PiTurnState::Errored { retryable: true }`
+    /// and surface a retry affordance (VAL-NFR-003).
+    TurnStateChanged { state: crate::turn_state::PiTurnState },
     /// Emitted in response to an explicit `Command::Shutdown`.
     ShuttingDown,
 }

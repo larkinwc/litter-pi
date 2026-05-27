@@ -304,6 +304,7 @@
 		6DC558677229D4C88CF3B5ED /* TerminalSessionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FF500954C7BD43BD398E761 /* TerminalSessionController.swift */; };
 		6DE00D539BF6F92533A4D8C4 /* RustAlleycatBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93CDBDD02E344E7C903D5DEC /* RustAlleycatBridge.swift */; };
 		6E5AE2344005411B8D8A0BF8 /* poimandres.json in Resources */ = {isa = PBXBuildFile; fileRef = 6F877B8FA83A8228C4515FB4 /* poimandres.json */; };
+		6EBD5C55806BE6A98F2F282D /* PiRetryTurnUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E3A40C68BBC61F5F64042A5 /* PiRetryTurnUITests.swift */; };
 		6EF7AFD103A68CDEA1A94612 /* HomeDashboardSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 018779F7529B6CAAC3A2B896 /* HomeDashboardSupportTests.swift */; };
 		6F9DC3769AABC5641DFD46DA /* material-theme.json in Resources */ = {isa = PBXBuildFile; fileRef = ACA6050F3A6D566E963B09A7 /* material-theme.json */; };
 		6FBA78C9A03BA409D4B04827 /* PendingUserInputRequest+ThreadMatching.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03A1EEEAE225FB324930D3AA /* PendingUserInputRequest+ThreadMatching.swift */; };
@@ -396,6 +397,7 @@
 		8ED7EC56C6814E0B40673ADD /* ChatGPTOAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77F28A803AA2BF325B0F88B9 /* ChatGPTOAuth.swift */; };
 		909A0CDCE6D9729A20D0DA43 /* OpenAIApiKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3374916FC10F81E9D1C0FCE5 /* OpenAIApiKeyStore.swift */; };
 		9106629F6ABA8F5D30DBA0F2 /* AppSnapshotRecord+Runtime.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7B233BBDF2CFAC604E4A1DD /* AppSnapshotRecord+Runtime.swift */; };
+		92AA74B4752B40BDF4C314B6 /* PiRetryTurnUITestHarnessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92A7CC75513F0B230613D168 /* PiRetryTurnUITestHarnessView.swift */; };
 		9322863E17E98563B7AA907A /* WatchSnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD06A4B1DBF4069D6608D7C2 /* WatchSnapshotStore.swift */; };
 		93979DE896F5A50F73AB4736 /* AppThreadSnapshot+Runtime.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC23186BC2EA0520D9532ED3 /* AppThreadSnapshot+Runtime.swift */; };
 		93C87EABAC0D427BD6089349 /* ChatWallpaperBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4754654D5240E850C98AB85D /* ChatWallpaperBackground.swift */; };
@@ -438,6 +440,7 @@
 		A33A88886D2402B3FD286FA7 /* gruvbox-dark-medium.json in Resources */ = {isa = PBXBuildFile; fileRef = 5B2CEDF857883B2E36157356 /* gruvbox-dark-medium.json */; };
 		A34B4D9FECC447E17DA15364 /* AppSpecificTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEFDEDEF73BC5E33C2F2E3B1 /* AppSpecificTypes.swift */; };
 		A4106AB49B911B49D4DCAE1A /* CatalystRuntimeStubs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E1172327AFBD0CF0947468A /* CatalystRuntimeStubs.swift */; };
+		A4FBFCEA427BB66B1302B8FD /* RetryTurnView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0691FF2FE436D0D9BFDB9EDD /* RetryTurnView.swift */; };
 		A55FD50870DD11C3BE43CECD /* cat_transmission_06.png in Resources */ = {isa = PBXBuildFile; fileRef = 159DE69EDAAB27536744024C /* cat_transmission_06.png */; };
 		A5BD2B22AB2223379FD596F6 /* LitterRectangularComplication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FF976ADC271DEBBD94D75A3 /* LitterRectangularComplication.swift */; };
 		A5D2556BF0AC3D6805FF91FF /* BrandLogo.swift in Sources */ = {isa = PBXBuildFile; fileRef = C361CBF40ED3D35C44D46880 /* BrandLogo.swift */; };
@@ -500,6 +503,7 @@
 		BA1027048577556040076C7C /* GhosttyTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0894A8F2B3DA66F879AEA4EE /* GhosttyTerminalView.swift */; };
 		BAB0343536C6CFD8EF952DE0 /* BerkeleyMono-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = B0648D501D363553E86BAE63 /* BerkeleyMono-Regular.otf */; };
 		BAC6A53AAE33105558DC06F7 /* WatchSize.swift in Sources */ = {isa = PBXBuildFile; fileRef = E15E7C15A89C96F6BA2D4502 /* WatchSize.swift */; };
+		BAF3004714C2DF8F6F0DB445 /* RetryTurnView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0691FF2FE436D0D9BFDB9EDD /* RetryTurnView.swift */; };
 		BB3DED8F932A301FB7E9BA42 /* MessageRenderCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47D3FB91329C177A51F198B3 /* MessageRenderCache.swift */; };
 		BB9DA7CA11969DAFD3F38E21 /* usgc-highk.json in Resources */ = {isa = PBXBuildFile; fileRef = F834CA5079226BE75FF8DC9E /* usgc-highk.json */; };
 		BBA3818C96635CEB35946AA5 /* AppearanceSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D216CEBFB1B4B71CFC2C0F8 /* AppearanceSettingsView.swift */; };
@@ -647,6 +651,7 @@
 		EEEBA55C8002EECC829EB3E7 /* github-light.json in Resources */ = {isa = PBXBuildFile; fileRef = 760BBA087DD7F86B27829E23 /* github-light.json */; };
 		EF781D13BE07551CFBD84C16 /* PiCapabilityGates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00185D1EBB5518DF35218D6C /* PiCapabilityGates.swift */; };
 		F1535DE46C8E5A530A8C131E /* ConversationScreenModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B66383694E80CDCBCF582C67 /* ConversationScreenModelTests.swift */; };
+		F1AA4D357E5A9B052CF7EF2F /* PiRetryTurnUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2E2EAF53D18CB0E2FED3BC4 /* PiRetryTurnUITests.swift */; };
 		F28082C2B5339F1BC57764F4 /* oscurange-C.json in Resources */ = {isa = PBXBuildFile; fileRef = 51C3C78C013D314F7F09AB6F /* oscurange-C.json */; };
 		F2A99B16F6AB41896865CD11 /* BerkeleyMono-Bold.otf in Resources */ = {isa = PBXBuildFile; fileRef = 3BD63CCD80D9E1F66879EF97 /* BerkeleyMono-Bold.otf */; };
 		F2C3C5EAE36C0F3CA25AEF74 /* NukeUI in Frameworks */ = {isa = PBXBuildFile; productRef = 4AC4417F86EE5D3B0C661C70 /* NukeUI */; };
@@ -673,6 +678,7 @@
 		F8591B754C9A672031DC87D4 /* ConversationInfoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73215C881883BBD745011412 /* ConversationInfoView.swift */; };
 		F8D0B05D7B596AB32391DE77 /* github-dark-default.json in Resources */ = {isa = PBXBuildFile; fileRef = 83D1805F2EFF51A7DD62CB88 /* github-dark-default.json */; };
 		F8FA54A11D223E760DD20173 /* ConversationComposerPopupOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25F1267B79425E5A42068216 /* ConversationComposerPopupOverlayView.swift */; };
+		F97F940F7D3D44DBDC5BC1ED /* PiRetryTurnUITestHarnessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92A7CC75513F0B230613D168 /* PiRetryTurnUITestHarnessView.swift */; };
 		F982003F1BA732A2CF72C3EF /* SwiftSshTrustBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34FD98644D715736EB96DF24 /* SwiftSshTrustBackend.swift */; };
 		F9CB7C7D1E911E4B1B7B06D9 /* solarized-light.json in Resources */ = {isa = PBXBuildFile; fileRef = 887F9EF05D2351DEB6B9602D /* solarized-light.json */; };
 		F9CBE40C2CA9C8B291A9FD9C /* github-dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 87E1D2E7E6CB4DA678C6605E /* github-dark.json */; };
@@ -776,6 +782,7 @@
 		03425A33EF523B27A338F941 /* ToolCallMessageParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolCallMessageParserTests.swift; sourceTree = "<group>"; };
 		034CE02FECF86AB9EC0842D0 /* DiscoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryView.swift; sourceTree = "<group>"; };
 		03A1EEEAE225FB324930D3AA /* PendingUserInputRequest+ThreadMatching.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PendingUserInputRequest+ThreadMatching.swift"; sourceTree = "<group>"; };
+		0691FF2FE436D0D9BFDB9EDD /* RetryTurnView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetryTurnView.swift; sourceTree = "<group>"; };
 		075CAE1122242626CE33A93F /* ConversationComposerEntryRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationComposerEntryRowView.swift; sourceTree = "<group>"; };
 		07BA4EAACA2BC4A8FDE63A18 /* SavedAppsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedAppsStore.swift; sourceTree = "<group>"; };
 		0894A8F2B3DA66F879AEA4EE /* GhosttyTerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyTerminalView.swift; sourceTree = "<group>"; };
@@ -825,6 +832,7 @@
 		2BC9B404D9E32D4734566A7D /* LitterWatch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LitterWatch.entitlements; sourceTree = "<group>"; };
 		2C66EB395895F19874D3B933 /* AgentRuntimePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentRuntimePresentation.swift; sourceTree = "<group>"; };
 		2DF6931F753DFD2AB67F62DC /* LitterLiveActivity.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = LitterLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		2E3A40C68BBC61F5F64042A5 /* PiRetryTurnUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiRetryTurnUITests.swift; sourceTree = "<group>"; };
 		2EB9C4946A911272FC0DC850 /* SilentAudioKeeper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SilentAudioKeeper.swift; sourceTree = "<group>"; };
 		2ECDF838BCE5FEBFE5B80DCC /* StreamingRendererCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingRendererCoordinator.swift; sourceTree = "<group>"; };
 		2FB04F90D08EE57F92DD7F58 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
@@ -982,6 +990,7 @@
 		8BE99A02238FD8184F77DD49 /* WallpaperAdjustView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WallpaperAdjustView.swift; sourceTree = "<group>"; };
 		8F98D2E0622F1A4DADC1E888 /* cat_transmission_01.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = cat_transmission_01.png; sourceTree = "<group>"; };
 		923C3634CB4FDDA1286DB63F /* LitterLiveActivity.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LitterLiveActivity.entitlements; sourceTree = "<group>"; };
+		92A7CC75513F0B230613D168 /* PiRetryTurnUITestHarnessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiRetryTurnUITestHarnessView.swift; sourceTree = "<group>"; };
 		92B1669CE17E1EB46A17C610 /* kitty-litter-dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "kitty-litter-dark.json"; sourceTree = "<group>"; };
 		92C2D998EDEC4E6034DC956F /* VoiceRuntimeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceRuntimeController.swift; sourceTree = "<group>"; };
 		9355F09B357618AB71A7C114 /* linear-light.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "linear-light.json"; sourceTree = "<group>"; };
@@ -1151,6 +1160,7 @@
 		EF1C08AB8EA89D69A67AA7B2 /* WidgetWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetWebView.swift; sourceTree = "<group>"; };
 		F05E1F150502D4C5682EBBFD /* LitterPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LitterPalette.swift; sourceTree = "<group>"; };
 		F28181DFD5B0FC796FD292C8 /* usgc-reticle.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "usgc-reticle.json"; sourceTree = "<group>"; };
+		F2E2EAF53D18CB0E2FED3BC4 /* PiRetryTurnUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiRetryTurnUITests.swift; sourceTree = "<group>"; };
 		F3474B8EA8D3148C94A7583F /* AppStatePermissionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStatePermissionTests.swift; sourceTree = "<group>"; };
 		F4623B9F597577A667A125D9 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
 		F503F51C28F35CF80376D9FD /* CloudKVSBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudKVSBridge.swift; sourceTree = "<group>"; };
@@ -1213,6 +1223,7 @@
 			isa = PBXGroup;
 			children = (
 				46D841AF0FFB0241834F88D0 /* LitterUITests.swift */,
+				2E3A40C68BBC61F5F64042A5 /* PiRetryTurnUITests.swift */,
 			);
 			name = LitterUITests;
 			path = Tests/LitterUITests;
@@ -1271,6 +1282,7 @@
 				BE04FF38C9E336A47C7E161B /* PerformanceHelpersTests.swift */,
 				22033C000C8317754EEB6984 /* PerServerComplicationTests.swift */,
 				AFF086A1DC9BE1E5BD328084 /* PiByokE2ETests.swift */,
+				F2E2EAF53D18CB0E2FED3BC4 /* PiRetryTurnUITests.swift */,
 				E37E6A02561EFC0135BB00F5 /* PluginMentionEncodingTests.swift */,
 				689720B7DCABED4F7EC8A5C6 /* RealtimeConversationProtocolTests.swift */,
 				009A217AC2D736865C5F06F5 /* RunningTurnSnapshotTests.swift */,
@@ -1723,12 +1735,14 @@
 				00185D1EBB5518DF35218D6C /* PiCapabilityGates.swift */,
 				0BFD13DFBBDC17261EAD5E62 /* PiPContentView.swift */,
 				BD1ACB5BC8CBE4849EB34E73 /* PiPHostView.swift */,
+				92A7CC75513F0B230613D168 /* PiRetryTurnUITestHarnessView.swift */,
 				E744000053715A5866060B15 /* PreviewSupport.swift */,
 				D5294396A986F27242D0F814 /* ProjectChip.swift */,
 				A5098071BFC24EED60D90A0C /* ProjectPickerSheet.swift */,
 				B6C41CA257D0C3F206C36F81 /* ProximityPairView.swift */,
 				2A7F3CC664EDAC7714BA817B /* QuickReplySheet.swift */,
 				4215329CF98636F31978500E /* RealtimeVoiceScreen.swift */,
+				0691FF2FE436D0D9BFDB9EDD /* RetryTurnView.swift */,
 				1D8203E9494F06515FC30E3D /* RollingMetricText.swift */,
 				6058552E839CA44F15DA3186 /* SavedAppDetailView.swift */,
 				A58307B7673850139031D023 /* SavedAppUpdateOverlay.swift */,
@@ -2320,6 +2334,7 @@
 				8EC17845C1FE8B8550984B57 /* PerServerComplicationTests.swift in Sources */,
 				ECD39F196866971BFDF7E17D /* PerformanceHelpersTests.swift in Sources */,
 				168B355D4745A558DD13FA1F /* PiByokE2ETests.swift in Sources */,
+				F1AA4D357E5A9B052CF7EF2F /* PiRetryTurnUITests.swift in Sources */,
 				C87E14EF9EE09B6990C255AC /* PluginMentionEncodingTests.swift in Sources */,
 				5CADE26AD9CB723244C8F639 /* RealtimeConversationProtocolTests.swift in Sources */,
 				F36A73F7FC24709ADD299327 /* RunningTurnSnapshotTests.swift in Sources */,
@@ -2487,6 +2502,7 @@
 				EF781D13BE07551CFBD84C16 /* PiCapabilityGates.swift in Sources */,
 				20B6731F8F7444623D9FC9E4 /* PiPContentView.swift in Sources */,
 				1C6229580B4B8D7B530622D7 /* PiPHostView.swift in Sources */,
+				F97F940F7D3D44DBDC5BC1ED /* PiRetryTurnUITestHarnessView.swift in Sources */,
 				24B302B9C08601CF5EBAC0E4 /* PreviewSupport.swift in Sources */,
 				E831EDB6EEB5A4B681EAAD6C /* ProjectChip.swift in Sources */,
 				ED0B08FC1DC6DE4C483C06E7 /* ProjectPickerSheet.swift in Sources */,
@@ -2497,6 +2513,7 @@
 				D416C8F96EC0ED100EC5F9FA /* RealtimeVoiceScreen.swift in Sources */,
 				44638D758B4155F7F8FF8A72 /* RealtimeWebRtcSession.swift in Sources */,
 				D512CAC21DF746FA702B10EF /* RecentDirectoryStore.swift in Sources */,
+				BAF3004714C2DF8F6F0DB445 /* RetryTurnView.swift in Sources */,
 				DD0C22B502190804EC15BFE7 /* RollingMetricText.swift in Sources */,
 				6DE00D539BF6F92533A4D8C4 /* RustAlleycatBridge.swift in Sources */,
 				97750B3E4DE02DE7436DD872 /* RustPiRuntimeBridge.swift in Sources */,
@@ -2685,6 +2702,7 @@
 				F51FA17C22F37A387230DB37 /* PiCapabilityGates.swift in Sources */,
 				96BDDDF704BD88C70063E938 /* PiPContentView.swift in Sources */,
 				391DF4BEFE2B0940887D94FF /* PiPHostView.swift in Sources */,
+				92AA74B4752B40BDF4C314B6 /* PiRetryTurnUITestHarnessView.swift in Sources */,
 				F678254F578ACFEC312BA8B7 /* PreviewSupport.swift in Sources */,
 				CA41DDEC724CC91E47583700 /* ProjectChip.swift in Sources */,
 				497E9B6036FB89C5BF7485A0 /* ProjectPickerSheet.swift in Sources */,
@@ -2693,6 +2711,7 @@
 				9FCDDF2CEBF27362F1026DC6 /* PushProxyClient.swift in Sources */,
 				5D69BA5B719D472AC1374842 /* QuickReplySheet.swift in Sources */,
 				ACDDA0682624D4EB1F24618E /* RecentDirectoryStore.swift in Sources */,
+				A4FBFCEA427BB66B1302B8FD /* RetryTurnView.swift in Sources */,
 				E2D03F494483EBB561B47785 /* RollingMetricText.swift in Sources */,
 				A91B73BD99881AF4EF7388BE /* RustAlleycatBridge.swift in Sources */,
 				2EAA8C6E04354604892CF043 /* RustPiRuntimeBridge.swift in Sources */,
@@ -2757,6 +2776,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7F7580E318B61556359A4EC1 /* LitterUITests.swift in Sources */,
+				6EBD5C55806BE6A98F2F282D /* PiRetryTurnUITests.swift in Sources */,
 				05A1BF5FB8220D9D48C611D0 /* SnapshotHelper.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -20,6 +20,34 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, warn};
 
+/// Typed turn state surface (VAL-NFR-003).
+///
+/// Mirrors `pi_mobile_client::PiTurnState`. Kept as a UniFFI-safe enum
+/// so iOS / Android observe the same typed transitions emitted by
+/// `runtime_bridge::drive` and the SSH remote driver and can render
+/// `RetryTurnView` / `RetryTurnRow` (accessibility id `pi.turn.retry`)
+/// when the active turn observes `Errored { retryable: true }`.
+#[derive(Debug, Clone, uniffi::Enum)]
+pub enum PiTurnState {
+    Idle,
+    Streaming,
+    Completed,
+    Errored { retryable: bool, message: String },
+}
+
+impl PiTurnState {
+    pub(crate) fn from_pi(state: pi_mobile_client::PiTurnState) -> Self {
+        match state {
+            pi_mobile_client::PiTurnState::Idle => PiTurnState::Idle,
+            pi_mobile_client::PiTurnState::Streaming => PiTurnState::Streaming,
+            pi_mobile_client::PiTurnState::Completed => PiTurnState::Completed,
+            pi_mobile_client::PiTurnState::Errored { retryable, message } => {
+                PiTurnState::Errored { retryable, message }
+            }
+        }
+    }
+}
+
 /// Typed pi runtime event surface for Swift/Kotlin consumers.
 ///
 /// Mirrors the `pi_mobile_client::PiEvent` variants the iOS UI needs.
@@ -56,6 +84,10 @@ pub enum PiEvent {
     TurnComplete,
     /// The agent turn failed; carries a human-readable error message.
     Error { message: String },
+    /// Typed turn state transition (VAL-NFR-003). Observers use this
+    /// to gate the `RetryTurnView` / `RetryTurnRow` surface — render
+    /// the retry button only when `state == Errored { retryable: true }`.
+    TurnStateChanged { state: PiTurnState },
     /// Emitted in response to an explicit `Command::Shutdown` (or when
     /// the runtime is being torn down by drop). Useful for the UI to
     /// gate further `send_pi_prompt` calls.
@@ -94,6 +126,9 @@ impl PiEvent {
             },
             P::TurnComplete => PiEvent::TurnComplete,
             P::TurnError { message } => PiEvent::Error { message },
+            P::TurnStateChanged { state } => PiEvent::TurnStateChanged {
+                state: PiTurnState::from_pi(state),
+            },
             P::ShuttingDown => PiEvent::ShuttingDown,
         }
     }

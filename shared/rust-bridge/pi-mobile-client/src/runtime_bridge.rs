@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::server::{Command, PiEvent, PiSessionConfig, ToolFactoryKind};
 use crate::tools::ish::IshToolFactory;
 use crate::tools::pty_dev::PtyDevToolFactory;
+use crate::turn_state::PiTurnState;
 
 /// Process-global counter incremented by the bridge's panic hook.
 ///
@@ -152,9 +153,18 @@ async fn handle_command(
             // Always emit PromptReceived so existing tests/observers
             // can see the prompt enter the runtime.
             let _ = events.send(PiEvent::PromptReceived { text: text.clone() });
+            // Transition Idle/Completed/Errored -> Streaming.
+            let _ = events.send(PiEvent::TurnStateChanged {
+                state: PiTurnState::Streaming,
+            });
 
             let Some(config) = session_config else {
-                // Echo mode: nothing further to do.
+                // Echo mode: nothing further to do. Echo-mode prompts
+                // are still considered Completed so observers see a
+                // terminal state transition.
+                let _ = events.send(PiEvent::TurnStateChanged {
+                    state: PiTurnState::Completed,
+                });
                 return;
             };
 
@@ -162,8 +172,12 @@ async fn handle_command(
                 match build_pi_session(config).await {
                     Ok(handle) => *pi_session = Some(handle),
                     Err(err) => {
+                        let message = format!("pi session init failed: {err}");
                         let _ = events.send(PiEvent::TurnError {
-                            message: format!("pi session init failed: {err}"),
+                            message: message.clone(),
+                        });
+                        let _ = events.send(PiEvent::TurnStateChanged {
+                            state: PiTurnState::errored_from_message(message),
                         });
                         return;
                     }
@@ -302,10 +316,17 @@ async fn run_prompt(
                 let _ = events.send(PiEvent::AssistantText { text });
             }
             let _ = events.send(PiEvent::TurnComplete);
+            let _ = events.send(PiEvent::TurnStateChanged {
+                state: PiTurnState::Completed,
+            });
         }
         Err(err) => {
+            let message = err.to_string();
             let _ = events.send(PiEvent::TurnError {
-                message: err.to_string(),
+                message: message.clone(),
+            });
+            let _ = events.send(PiEvent::TurnStateChanged {
+                state: PiTurnState::errored_from_message(message),
             });
         }
     }
@@ -359,6 +380,82 @@ mod tests {
             "PiSessionConfig.base_url must reach the active provider; got `{}`",
             handle.provider_base_url()
         );
+    }
+
+    /// VAL-NFR-003 regression: drive a prompt through echo mode and
+    /// confirm the typed `TurnStateChanged` events fire in the right
+    /// order (Streaming → Completed). The bridge in echo mode does not
+    /// require a real pi session, so this exercise stays hermetic.
+    #[test]
+    fn echo_mode_emits_streaming_then_completed_state_transitions() {
+        use crate::server::{Command, PiEvent};
+        use crate::turn_state::PiTurnState;
+        use std::time::Duration;
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("tokio runtime");
+
+        let (commands_tx, commands_rx) = tokio::sync::mpsc::channel::<Command>(4);
+        let (events_tx, mut events_rx) = tokio::sync::broadcast::channel::<PiEvent>(16);
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let channels = RuntimeChannels {
+            commands_rx,
+            events_tx: events_tx.clone(),
+            shutdown_rx,
+            cancel_sentinel: cancel,
+            session: None,
+        };
+
+        rt.block_on(async move {
+            let drive_handle = tokio::spawn(drive(channels));
+            commands_tx
+                .send(Command::Prompt("ping".into()))
+                .await
+                .expect("send prompt");
+
+            // Collect first three events with a bounded timeout.
+            let mut received = Vec::new();
+            for _ in 0..3 {
+                let next = tokio::time::timeout(Duration::from_secs(2), events_rx.recv())
+                    .await
+                    .expect("event arrived")
+                    .expect("broadcast open");
+                received.push(next);
+            }
+
+            let _ = shutdown_tx.send(());
+            drop(commands_tx);
+            let _ = tokio::time::timeout(Duration::from_secs(2), drive_handle).await;
+
+            assert!(
+                matches!(received[0], PiEvent::PromptReceived { ref text } if text == "ping"),
+                "first event must be PromptReceived, got {:?}",
+                received[0]
+            );
+            assert!(
+                matches!(
+                    received[1],
+                    PiEvent::TurnStateChanged {
+                        state: PiTurnState::Streaming
+                    }
+                ),
+                "second event must be TurnStateChanged(Streaming), got {:?}",
+                received[1]
+            );
+            assert!(
+                matches!(
+                    received[2],
+                    PiEvent::TurnStateChanged {
+                        state: PiTurnState::Completed
+                    }
+                ),
+                "third event must be TurnStateChanged(Completed), got {:?}",
+                received[2]
+            );
+        });
     }
 
     /// Companion check: an OpenAI-compatible provider should also pick
