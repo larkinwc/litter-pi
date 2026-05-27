@@ -23,6 +23,7 @@ settings:
   base:
     SWIFT_VERSION: "5.9"
     SWIFT_STRICT_CONCURRENCY: targeted
+    DEVELOPMENT_TEAM: PGN9D562MZ
     MARKETING_VERSION: "1.5.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_OBJC_BRIDGING_HEADER: Sources/Litter/Bridge/codex_bridge_objc.h
@@ -32,7 +33,6 @@ settings:
     "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": "$(inherited) $(PROJECT_DIR)/GeneratedRust/ios-device"
     "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": "$(inherited) $(PROJECT_DIR)/GeneratedRust/ios-sim"
     IPHONEOS_DEPLOYMENT_TARGET: "18.0"
-    DEVELOPMENT_TEAM: UH66Q8ZAYG
     # Xcode 15+ explicit-module builds. First clean build is slightly
     # slower, but module graphs are cached per-target after that, so
     # incremental Swift compiles in the app target drop substantially.
@@ -58,15 +58,17 @@ targets:
       path: Sources/Litter/Litter.entitlements
       properties:
         aps-environment: production
-        com.apple.developer.carplay-voice-based-conversation: true
+        # com.apple.developer.carplay-voice-based-conversation: stripped for
+        # local sideload — requires Apple approval. Re-add once Apple grants
+        # the CarPlay Voice-Based Conversation entitlement on team PGN9D562MZ.
         # iCloud KVS sync (Feature C). Re-add when the iCloud container
-        # `iCloud.com.sigkitten.litter` exists in the Apple Developer Portal
+        # `iCloud.com.larkinwc.pilitter` exists in the Apple Developer Portal
         # AND is enabled on the iOS app's provisioning profile. Without
         # both, archive fails: "Provisioning profile doesn't include the
         # iCloud capability."
-        # com.apple.developer.ubiquity-kvstore-identifier: $(TeamIdentifierPrefix)iCloud.com.sigkitten.litter
+        # com.apple.developer.ubiquity-kvstore-identifier: $(TeamIdentifierPrefix)iCloud.com.larkinwc.pilitter
         com.apple.security.application-groups:
-          - group.com.sigkitten.litter
+          - group.com.larkinwc.pilitter
     attributes:
       SystemCapabilities:
         com.apple.BackgroundModes:
@@ -125,7 +127,7 @@ targets:
         embed: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.sigkitten.litter
+        PRODUCT_BUNDLE_IDENTIFIER: com.larkinwc.pilitter
         INFOPLIST_FILE: Sources/Litter/Info.plist
         SWIFT_OBJC_BRIDGING_HEADER: Sources/Litter/Bridge/codex_bridge_objc.h
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -155,13 +157,13 @@ targets:
       properties:
         aps-environment: production
         # iCloud KVS sync (Feature C). Re-add when the iCloud container
-        # `iCloud.com.sigkitten.litter` exists in the Apple Developer Portal
+        # `iCloud.com.larkinwc.pilitter` exists in the Apple Developer Portal
         # AND the Mac App Store profile is regenerated to include the iCloud
         # capability. Direct-dist (DeveloperID entitlements) keeps the key
         # because Developer ID apps validate iCloud at runtime, not via profile.
-        # com.apple.developer.ubiquity-kvstore-identifier: $(TeamIdentifierPrefix)iCloud.com.sigkitten.litter
+        # com.apple.developer.ubiquity-kvstore-identifier: $(TeamIdentifierPrefix)iCloud.com.larkinwc.pilitter
         com.apple.security.application-groups:
-          - group.com.sigkitten.litter
+          - group.com.larkinwc.pilitter
         com.apple.security.app-sandbox: true
         com.apple.security.device.bluetooth: true
         com.apple.security.files.user-selected.read-write: true
@@ -222,7 +224,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: Litter
-        PRODUCT_BUNDLE_IDENTIFIER: com.sigkitten.litter
+        PRODUCT_BUNDLE_IDENTIFIER: com.larkinwc.pilitter
         DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
         INFOPLIST_FILE: Sources/Litter/Info-Catalyst.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIconMac
@@ -269,7 +271,7 @@ targets:
       path: Sources/LitterLiveActivity/LitterLiveActivity.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.com.sigkitten.litter
+          - group.com.larkinwc.pilitter
     sources:
       - path: Sources/LitterLiveActivity
       - path: Sources/Litter/Models/CodexTurnAttributes.swift
@@ -281,7 +283,7 @@ targets:
       - path: Sources/LitterLiveActivity/Assets.xcassets
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.sigkitten.litter.liveactivity
+        PRODUCT_BUNDLE_IDENTIFIER: com.larkinwc.pilitter.liveactivity
         INFOPLIST_FILE: Sources/LitterLiveActivity/Info.plist
       configs:
         Debug:
@@ -306,7 +308,7 @@ targets:
       properties:
         aps-environment: production
         com.apple.security.application-groups:
-          - group.com.sigkitten.litter
+          - group.com.larkinwc.pilitter
     sources:
       - path: Sources/LitterWatch
         excludes:
@@ -320,7 +322,7 @@ targets:
         embed: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.sigkitten.litter.watchkitapp
+        PRODUCT_BUNDLE_IDENTIFIER: com.larkinwc.pilitter.watchkitapp
         INFOPLIST_FILE: Sources/LitterWatch/Info.plist
         TARGETED_DEVICE_FAMILY: "4"
         WATCHOS_DEPLOYMENT_TARGET: "11.0"
@@ -354,7 +356,7 @@ targets:
       path: Sources/LitterWatchComplications/LitterWatchComplications.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.com.sigkitten.litter
+          - group.com.larkinwc.pilitter
     sources:
       - path: Sources/LitterWatchComplications
         excludes:
@@ -363,7 +365,7 @@ targets:
       - path: Sources/LitterWatchComplications/Assets.xcassets
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.sigkitten.litter.watchkitapp.complications
+        PRODUCT_BUNDLE_IDENTIFIER: com.larkinwc.pilitter.watchkitapp.complications
         INFOPLIST_FILE: Sources/LitterWatchComplications/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "4"

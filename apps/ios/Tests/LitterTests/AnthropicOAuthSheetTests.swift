@@ -173,7 +173,7 @@ final class AnthropicOAuthSheetTests: XCTestCase {
         // SecItemAdd / SecItemCopyMatching calls are exercised in
         // device runs (and tracked via the VAL-AUTH-004 grep).
         let storage = AnthropicKeychainStorage(
-            service: "com.sigkitten.litter.pi.oauth.tests",
+            service: "com.larkinwc.pilitter.pi.oauth.tests",
             account: "anthropic-oauth-tests"
         )
         // `loadRefreshToken` may legitimately error on a sandboxed
@@ -183,7 +183,7 @@ final class AnthropicOAuthSheetTests: XCTestCase {
         _ = try? storage.loadRefreshToken()
         XCTAssertEqual(
             AnthropicKeychainStorage.defaultService,
-            "com.sigkitten.litter.pi.oauth"
+            "com.larkinwc.pilitter.pi.oauth"
         )
     }
 }

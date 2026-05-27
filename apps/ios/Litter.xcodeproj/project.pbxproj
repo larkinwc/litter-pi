@@ -1958,28 +1958,28 @@
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					3B991C03E72B1546CAD35698 = {
-						DevelopmentTeam = UH66Q8ZAYG;
+						DevelopmentTeam = PGN9D562MZ;
 					};
 					4D58398238C075D3A3A3AB9B = {
-						DevelopmentTeam = UH66Q8ZAYG;
+						DevelopmentTeam = PGN9D562MZ;
 					};
 					6EBBC661C017816B2D4245DF = {
-						DevelopmentTeam = UH66Q8ZAYG;
+						DevelopmentTeam = PGN9D562MZ;
 						ProvisioningStyle = "$(APP_CODE_SIGN_STYLE)";
 					};
 					7BB0106D190F10717D781234 = {
-						DevelopmentTeam = UH66Q8ZAYG;
+						DevelopmentTeam = PGN9D562MZ;
 						TestTargetID = A3D84F588EDBC1EA550D6691;
 					};
 					A3D84F588EDBC1EA550D6691 = {
-						DevelopmentTeam = UH66Q8ZAYG;
+						DevelopmentTeam = PGN9D562MZ;
 						SystemCapabilities = "[\"com.apple.BackgroundModes\": [\"enabled\": true]]";
 					};
 					C0C98C6012493B73CDD5AD6E = {
-						DevelopmentTeam = UH66Q8ZAYG;
+						DevelopmentTeam = PGN9D562MZ;
 					};
 					DA07A1EAC6173D09F6FB99D9 = {
-						DevelopmentTeam = UH66Q8ZAYG;
+						DevelopmentTeam = PGN9D562MZ;
 					};
 				};
 			};
@@ -2866,7 +2866,7 @@
 				HEADER_SEARCH_PATHS = "$(inherited)";
 				INFOPLIST_FILE = Sources/LitterWatch/Info.plist;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = com.sigkitten.litter.watchkitapp;
+				PRODUCT_BUNDLE_IDENTIFIER = com.larkinwc.pilitter.watchkitapp;
 				PROVISIONING_PROFILE_SPECIFIER = "$(WATCH_PROVISIONING_PROFILE_SPECIFIER)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
@@ -2898,7 +2898,7 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = "$(inherited) -lc++ -lz -lresolv -lcodex_mobile_client -lghostty";
-				PRODUCT_BUNDLE_IDENTIFIER = com.sigkitten.litter;
+				PRODUCT_BUNDLE_IDENTIFIER = com.larkinwc.pilitter;
 				PROVISIONING_PROFILE_SPECIFIER = "$(APP_PROVISIONING_PROFILE_SPECIFIER)";
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = Sources/Litter/Bridge/codex_bridge_objc.h;
@@ -2921,7 +2921,7 @@
 				);
 				LIVE_ACTIVITY_CODE_SIGN_STYLE = Automatic;
 				LIVE_ACTIVITY_PROVISIONING_PROFILE_SPECIFIER = "";
-				PRODUCT_BUNDLE_IDENTIFIER = com.sigkitten.litter.liveactivity;
+				PRODUCT_BUNDLE_IDENTIFIER = com.larkinwc.pilitter.liveactivity;
 				PROVISIONING_PROFILE_SPECIFIER = "$(LIVE_ACTIVITY_PROVISIONING_PROFILE_SPECIFIER)";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -2946,7 +2946,7 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = "$(inherited) -lc++ -lz -lresolv -lcodex_mobile_client -lghostty";
-				PRODUCT_BUNDLE_IDENTIFIER = com.sigkitten.litter;
+				PRODUCT_BUNDLE_IDENTIFIER = com.larkinwc.pilitter;
 				PROVISIONING_PROFILE_SPECIFIER = "$(APP_PROVISIONING_PROFILE_SPECIFIER)";
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = Sources/Litter/Bridge/codex_bridge_objc.h;
@@ -3013,7 +3013,7 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = UH66Q8ZAYG;
+				DEVELOPMENT_TEAM = PGN9D562MZ;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -3063,7 +3063,7 @@
 				"LIBRARY_SEARCH_PATHS[sdk=macosx*]" = "$(inherited) $(PROJECT_DIR)/GeneratedRust/ios-macabi";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				OTHER_LDFLAGS = "$(inherited) -lc++ -lz -lresolv -lcodex_mobile_client -lghostty";
-				PRODUCT_BUNDLE_IDENTIFIER = com.sigkitten.litter;
+				PRODUCT_BUNDLE_IDENTIFIER = com.larkinwc.pilitter;
 				PRODUCT_NAME = Litter;
 				PROVISIONING_PROFILE_SPECIFIER = "$(APP_PROVISIONING_PROFILE_SPECIFIER)";
 				SDKROOT = auto;
@@ -3093,7 +3093,7 @@
 				LIVE_ACTIVITY_CODE_SIGN_IDENTITY = "";
 				LIVE_ACTIVITY_CODE_SIGN_STYLE = Automatic;
 				LIVE_ACTIVITY_PROVISIONING_PROFILE_SPECIFIER = "";
-				PRODUCT_BUNDLE_IDENTIFIER = com.sigkitten.litter.liveactivity;
+				PRODUCT_BUNDLE_IDENTIFIER = com.larkinwc.pilitter.liveactivity;
 				PROVISIONING_PROFILE_SPECIFIER = "$(LIVE_ACTIVITY_PROVISIONING_PROFILE_SPECIFIER)";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -3157,7 +3157,7 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = UH66Q8ZAYG;
+				DEVELOPMENT_TEAM = PGN9D562MZ;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -3252,7 +3252,7 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = UH66Q8ZAYG;
+				DEVELOPMENT_TEAM = PGN9D562MZ;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -3317,7 +3317,7 @@
 				HEADER_SEARCH_PATHS = "$(inherited)";
 				INFOPLIST_FILE = Sources/LitterWatch/Info.plist;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = com.sigkitten.litter.watchkitapp;
+				PRODUCT_BUNDLE_IDENTIFIER = com.larkinwc.pilitter.watchkitapp;
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
 				SUPPORTS_MACCATALYST = NO;
@@ -3341,7 +3341,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = com.sigkitten.litter.watchkitapp.complications;
+				PRODUCT_BUNDLE_IDENTIFIER = com.larkinwc.pilitter.watchkitapp.complications;
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
 				SWIFT_INCLUDE_PATHS = "$(inherited)";
@@ -3369,7 +3369,7 @@
 				"LIBRARY_SEARCH_PATHS[sdk=macosx*]" = "$(inherited) $(PROJECT_DIR)/GeneratedRust/ios-macabi";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				OTHER_LDFLAGS = "$(inherited) -lc++ -lz -lresolv -lcodex_mobile_client -lghostty";
-				PRODUCT_BUNDLE_IDENTIFIER = com.sigkitten.litter;
+				PRODUCT_BUNDLE_IDENTIFIER = com.larkinwc.pilitter;
 				PRODUCT_NAME = Litter;
 				PROVISIONING_PROFILE_SPECIFIER = "$(APP_PROVISIONING_PROFILE_SPECIFIER)";
 				SDKROOT = auto;
@@ -3418,7 +3418,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = com.sigkitten.litter.watchkitapp.complications;
+				PRODUCT_BUNDLE_IDENTIFIER = com.larkinwc.pilitter.watchkitapp.complications;
 				PROVISIONING_PROFILE_SPECIFIER = "$(WATCH_COMP_PROVISIONING_PROFILE_SPECIFIER)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
@@ -3452,7 +3452,7 @@
 				"LIBRARY_SEARCH_PATHS[sdk=macosx*]" = "$(inherited) $(PROJECT_DIR)/GeneratedRust/ios-macabi";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				OTHER_LDFLAGS = "$(inherited) -lc++ -lz -lresolv -lcodex_mobile_client -lghostty";
-				PRODUCT_BUNDLE_IDENTIFIER = com.sigkitten.litter;
+				PRODUCT_BUNDLE_IDENTIFIER = com.larkinwc.pilitter;
 				PRODUCT_NAME = Litter;
 				PROVISIONING_PROFILE_SPECIFIER = "$(APP_PROVISIONING_PROFILE_SPECIFIER)";
 				SDKROOT = auto;
@@ -3480,7 +3480,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = com.sigkitten.litter.watchkitapp.complications;
+				PRODUCT_BUNDLE_IDENTIFIER = com.larkinwc.pilitter.watchkitapp.complications;
 				PROVISIONING_PROFILE_SPECIFIER = "$(WATCH_COMP_PROVISIONING_PROFILE_SPECIFIER)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
@@ -3504,7 +3504,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.sigkitten.litter.liveactivity;
+				PRODUCT_BUNDLE_IDENTIFIER = com.larkinwc.pilitter.liveactivity;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -3523,7 +3523,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.sigkitten.litter;
+				PRODUCT_BUNDLE_IDENTIFIER = com.larkinwc.pilitter;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = Sources/Litter/Bridge/codex_bridge_objc.h;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -3540,7 +3540,7 @@
 				HEADER_SEARCH_PATHS = "$(inherited)";
 				INFOPLIST_FILE = Sources/LitterWatch/Info.plist;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = com.sigkitten.litter.watchkitapp;
+				PRODUCT_BUNDLE_IDENTIFIER = com.larkinwc.pilitter.watchkitapp;
 				PROVISIONING_PROFILE_SPECIFIER = "$(WATCH_PROVISIONING_PROFILE_SPECIFIER)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;

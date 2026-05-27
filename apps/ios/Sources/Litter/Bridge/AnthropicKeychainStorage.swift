@@ -14,7 +14,7 @@ import Security
 /// (e.g. after a successful PKCE handshake or on refresh).
 ///
 /// The service identifier mirrors the bundle id used by the rest of the
-/// app (`com.sigkitten.litter`) so the stored entry is namespaced under
+/// app (`com.larkinwc.pilitter`) so the stored entry is namespaced under
 /// the host application and trivially discoverable in Keychain Access
 /// during debugging.
 enum AnthropicKeychainStorageError: Error, LocalizedError {
@@ -45,7 +45,7 @@ final class AnthropicKeychainStorage {
     /// sync with the Android `MasterKey` alias documented in
     /// `architecture.md` so cross-platform debugging can correlate
     /// stored credentials.
-    static let defaultService = "com.sigkitten.litter.pi.oauth"
+    static let defaultService = "com.larkinwc.pilitter.pi.oauth"
 
     private let service: String
     private let account: String

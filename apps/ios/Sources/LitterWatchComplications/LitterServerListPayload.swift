@@ -19,8 +19,8 @@ struct LitterServerListPayload: Codable, Equatable {
 
 /// Reads/writes the connected-server list out of the shared App Group.
 enum LitterServerListStore {
-    static let appGroup = "group.com.sigkitten.litter"
-    static let key = "servers.v1"
+    static let appGroup = "group.com.larkinwc.pilitter"
+    static let key = "**********"
 
     static func current() -> LitterServerListPayload? {
         guard
@@ -46,8 +46,8 @@ enum LitterServerListStore {
 /// Shape matches the per-server `LitterComplicationEntry.Payload` written
 /// in the aggregate path, so the same decoder can rehydrate either side.
 enum LitterPerServerComplicationStore {
-    static let appGroup = "group.com.sigkitten.litter"
-    static let key = "complication.per-server.v1"
+    static let appGroup = "group.com.larkinwc.pilitter"
+    static let key = "**************************"
 
     /// Returns the per-server payload map, keyed by serverId.
     static func current() -> [String: Data] {
