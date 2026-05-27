@@ -520,12 +520,12 @@ mod tests {
         );
         let (token_url, request_rx) = spawn_oneshot_capture(&body);
 
-        // SAFETY: setting our own process env var. The
-        // `#[serial_test::serial(pi_anthropic_oauth_token_url_env)]`
-        // attribute on this test (and on the failure-path twin)
-        // serializes any test in this crate that mutates
-        // `PI_ANTHROPIC_OAUTH_TOKEN_URL`, so `cargo test` can run
-        // without `--test-threads=1`.
+        // The `#[serial_test::serial(pi_anthropic_oauth_token_url_env)]`
+        // attribute on this test (and on the failure-path twin) serializes
+        // any test in this crate that mutates `PI_ANTHROPIC_OAUTH_TOKEN_URL`,
+        // so `cargo test` can run without `--test-threads=1`.
+        //
+        // SAFETY: setting our own process env var, serialized via serial_test.
         unsafe {
             std::env::set_var("PI_ANTHROPIC_OAUTH_TOKEN_URL", &token_url);
         }
@@ -642,12 +642,12 @@ mod tests {
             401,
             r#"{"error":"invalid_grant","error_description":"refresh token revoked"}"#,
         );
-        // SAFETY: setting our own process env var. The
-        // `#[serial_test::serial(pi_anthropic_oauth_token_url_env)]`
-        // attribute on this test (and on the happy-path twin)
-        // serializes any test in this crate that mutates
-        // `PI_ANTHROPIC_OAUTH_TOKEN_URL`, so `cargo test` can run
-        // without `--test-threads=1`.
+        // The `#[serial_test::serial(pi_anthropic_oauth_token_url_env)]`
+        // attribute on this test (and on the happy-path twin) serializes
+        // any test in this crate that mutates `PI_ANTHROPIC_OAUTH_TOKEN_URL`,
+        // so `cargo test` can run without `--test-threads=1`.
+        //
+        // SAFETY: setting our own process env var, serialized via serial_test.
         unsafe {
             std::env::set_var("PI_ANTHROPIC_OAUTH_TOKEN_URL", &token_url);
         }
