@@ -211,7 +211,7 @@ $(shell mkdir -p $(STAMPS))
 	ios-build ios-build-sim ios-build-sim-fast ios-build-device ios-build-device-fast \
 	watch watch-sim watch-sim-run watch-device watch-typecheck watch-register \
 	test test-rust test-ios test-android \
-	ios-release-prep mac-release-prep testflight mac-testflight mac-direct-dist appstore-release play-upload play-release \
+	ios-release-prep mac-release-prep \
 	clean clean-rust clean-ios clean-android \
 	rebuild-bindings kittylitter kittylitter-restart tui tui-run help
 
@@ -276,11 +276,9 @@ catalyst-fast-run: catalyst-fast
 	@pkill -9 -f "Debug-maccatalyst/Litter.app" 2>/dev/null; true
 	@open $(CATALYST_DERIVED_DATA)/Build/Products/Debug-maccatalyst/Litter.app
 
-# Direct (unsandboxed) Mac Catalyst build — same binary the DMG
-# distribution lane ships, but built with `DeveloperID` configuration
-# and launched in-place so you can iterate without the archive →
-# export → hdiutil → notarize → staple cycle. Use `make mac-direct-dist`
-# for the signed + notarized DMG.
+# Direct (unsandboxed) Mac Catalyst build — built with `DeveloperID`
+# configuration and launched in-place so you can iterate locally
+# without the archive/notarize cycle.
 MAC_DIRECT_DERIVED := $(IOS_DIR)/build/mac-direct
 mac-direct: rust-ios-package alpine-fs xcgen
 	@echo "==> Building LitterMac (DeveloperID — unsandboxed)..."
@@ -810,34 +808,6 @@ test-android:
 ios-release-prep: rust-ios-device-release alpine-fs xcgen
 
 mac-release-prep: rust-mac-release xcgen
-
-testflight: ios-release-prep
-	@echo "==> Uploading to TestFlight..."
-	@$(IOS_SCRIPTS)/testflight-upload.sh
-
-mac-testflight: mac-release-prep
-	@echo "==> Uploading Mac Catalyst build to TestFlight..."
-	@$(IOS_SCRIPTS)/testflight-upload-mac.sh
-
-mac-direct-dist: mac-release-prep
-	@echo "==> Building notarized Mac Catalyst DMG for direct distribution..."
-	@$(IOS_SCRIPTS)/direct-dist-mac.sh
-
-appstore-release: ios-release-prep
-	@echo "==> Submitting current repo version to the App Store..."
-	@$(IOS_SCRIPTS)/app-store-release.sh
-
-play-upload: android-release
-	@echo "==> Uploading to Google Play..."
-	@$(ANDROID_DIR)/scripts/play-upload.sh
-
-play-release:
-	@if [ -n "$$LITTER_VERSION_CODE_OVERRIDE" ]; then \
-		echo "==> Using overridden Android versionCode $$LITTER_VERSION_CODE_OVERRIDE"; \
-	else \
-		$(ANDROID_DIR)/scripts/bump-version.sh; \
-	fi
-	@$(MAKE) play-upload
 
 clean: clean-rust clean-ios clean-android
 	@rm -rf $(STAMPS)

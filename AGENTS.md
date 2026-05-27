@@ -153,8 +153,6 @@ Incremental policy:
 | `make bindings` | Regenerate UniFFI Swift + Kotlin bindings |
 | `make xcgen` | Regenerate `Litter.xcodeproj` from `project.yml` |
 | `make test` | Run Rust + iOS + Android tests |
-| `make testflight` | Full iOS build + TestFlight upload |
-| `make play-upload` | Full Android build + Google Play upload |
 | `make clean` | Remove all build artifacts + stamp cache |
 
 ### Cache invalidation
@@ -173,7 +171,6 @@ Incremental policy:
 - `./apps/ios/scripts/download-litter-ish.sh` — fetch the pinned `dnakov/litter-ish` GitHub release, extract `litter_ish.xcframework` into `apps/ios/Frameworks/` and `alpine-fakefs/` into `apps/ios/Resources/`. Reads `LITTER_ISH_VERSION` from env (set by `make litter-ish`).
 - `./apps/ios/scripts/sync-codex.sh` — sync codex submodule + apply patches
 - `./apps/ios/scripts/regenerate-project.sh` — regenerate Xcode project via xcodegen; this is the safe path because it removes any accidental nested `apps/ios/Litter.xcodeproj/Litter.xcodeproj` before regenerating
-- `./apps/ios/scripts/testflight-upload.sh` — archive, export IPA, upload to TestFlight
 - `./shared/rust-bridge/generate-bindings.sh` — generate UniFFI Swift/Kotlin bindings
 - `./tools/scripts/build-android-rust.sh` — cross-compile Rust JNI libs for Android via `cargo-ndk`
 - `./tools/scripts/testflight-feedback.sh` — fetch TestFlight feedback with optional screenshot download; supports `SINCE` / `UNTIL` env filtering for createdDate windows
