@@ -93,6 +93,7 @@
 		20B6731F8F7444623D9FC9E4 /* PiPContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BFD13DFBBDC17261EAD5E62 /* PiPContentView.swift */; };
 		20FCCDA9C0FDEDDE66AEA1E6 /* ThreadSearchResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7B2873F09522FAE2FFFFC9B /* ThreadSearchResultsView.swift */; };
 		2130D006C3D67861E5488F0C /* ConversationOptionsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE81AFDF90E8ED46203AF90C /* ConversationOptionsSheet.swift */; };
+		2160D534A6E6C95FBB046671 /* PiCapabilityGatesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95AB745E0783D4044BB4D8BE /* PiCapabilityGatesUITests.swift */; };
 		2176CC91759462B53D6BD184 /* snazzy-light.json in Resources */ = {isa = PBXBuildFile; fileRef = FE2B786FCD5DBBFC5BBEB20E /* snazzy-light.json */; };
 		21C0AE771F617407B2928FD2 /* ToolCallModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AB0858848FDF680B63C2432 /* ToolCallModels.swift */; };
 		221A52AB9F38F3FEEEDC7ED9 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 573CB5B7497BFA40D8558CCE /* Metal.framework */; };
@@ -546,6 +547,7 @@
 		CCEC8DC921FB6DB93D821519 /* VoiceTranscriptionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57573910BEE96B3224934D2 /* VoiceTranscriptionManager.swift */; };
 		CD03B7391871A06D022D42BA /* HeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 817117A5E16EBD02388DBBE1 /* HeaderView.swift */; };
 		CD1F64EA4F023DF6BC9A169D /* InlineHandoffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 832D667C7B0B93EFED3577EE /* InlineHandoffView.swift */; };
+		CD31A98C69C43EF135D4AA65 /* PiCapabilityFixtureUITestHarnessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBE132D25BB5EF0649F2DC17 /* PiCapabilityFixtureUITestHarnessView.swift */; };
 		CD997F637C40E2B9D1AC336A /* AppThreadSnapshot+Runtime.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC23186BC2EA0520D9532ED3 /* AppThreadSnapshot+Runtime.swift */; };
 		CDE1951B9FF93BCC856C0A3E /* MessageContentBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E814DFE71DB7B6A64B7B3A /* MessageContentBridge.swift */; };
 		CDE88674C0C5A1B4C801267E /* ConnectionTarget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4925417F70C546B80DBD9EFF /* ConnectionTarget.swift */; };
@@ -617,6 +619,7 @@
 		E51F9389AA06FF6268C8FD1A /* ServerSelectionIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39FB2858173D01F79A8F2368 /* ServerSelectionIntent.swift */; };
 		E5FA77CA162F319648A2D21F /* material-theme.json in Resources */ = {isa = PBXBuildFile; fileRef = ACA6050F3A6D566E963B09A7 /* material-theme.json */; };
 		E696F6541327FC62A2DFDD61 /* min-dark-.json in Resources */ = {isa = PBXBuildFile; fileRef = 52BB963EAE95E8BF49FA4F19 /* min-dark-.json */; };
+		E6D2D80957A4D5FB169C9F37 /* PiCapabilityFixtureUITestHarnessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBE132D25BB5EF0649F2DC17 /* PiCapabilityFixtureUITestHarnessView.swift */; };
 		E73B2D68B7087482FD411BB9 /* TipJarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FAF7AE3EEBD36B367083892 /* TipJarView.swift */; };
 		E7C078C9B33B1534229993DB /* AppServerSnapshot+UI.swift in Sources */ = {isa = PBXBuildFile; fileRef = A58E2FAFA4D997A5F23A04E5 /* AppServerSnapshot+UI.swift */; };
 		E7DA37A53E778319C67981B7 /* TipJarStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8A5A95314CD68B7C7276BFD /* TipJarStore.swift */; };
@@ -999,6 +1002,7 @@
 		93CDBDD02E344E7C903D5DEC /* RustAlleycatBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RustAlleycatBridge.swift; sourceTree = "<group>"; };
 		9465B38F1CE05DAC59F5A918 /* proof-light.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "proof-light.json"; sourceTree = "<group>"; };
 		952E431DD6FA6740D6585B4A /* NetworkReachabilityObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkReachabilityObserver.swift; sourceTree = "<group>"; };
+		95AB745E0783D4044BB4D8BE /* PiCapabilityGatesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiCapabilityGatesUITests.swift; sourceTree = "<group>"; };
 		962FB1FBD4EB523E14C3A14D /* LitterRunningTurnWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LitterRunningTurnWidget.swift; sourceTree = "<group>"; };
 		971354BA3CB115869D1FB27C /* tokyo-night.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "tokyo-night.json"; sourceTree = "<group>"; };
 		991F612D39C0762BB7657452 /* CarPlay.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CarPlay.framework; path = System/Library/Frameworks/CarPlay.framework; sourceTree = SDKROOT; };
@@ -1066,6 +1070,7 @@
 		B8CDEFFF11E937A2BDB094FB /* SwipeableRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeableRow.swift; sourceTree = "<group>"; };
 		BAC3382D3C771B358C1E3CE6 /* WatchHapticDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchHapticDetector.swift; sourceTree = "<group>"; };
 		BAC7D83216AF4F0FFA325009 /* gruvbox-light-soft.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "gruvbox-light-soft.json"; sourceTree = "<group>"; };
+		BBE132D25BB5EF0649F2DC17 /* PiCapabilityFixtureUITestHarnessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiCapabilityFixtureUITestHarnessView.swift; sourceTree = "<group>"; };
 		BC1E299971F413437A6180D0 /* LitterWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LitterWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BC37206CDAE11DBA2A94234E /* WatchThemePayloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchThemePayloadTests.swift; sourceTree = "<group>"; };
 		BD06A4B1DBF4069D6608D7C2 /* WatchSnapshotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSnapshotStore.swift; sourceTree = "<group>"; };
@@ -1223,6 +1228,7 @@
 			isa = PBXGroup;
 			children = (
 				46D841AF0FFB0241834F88D0 /* LitterUITests.swift */,
+				95AB745E0783D4044BB4D8BE /* PiCapabilityGatesUITests.swift */,
 				2E3A40C68BBC61F5F64042A5 /* PiRetryTurnUITests.swift */,
 			);
 			name = LitterUITests;
@@ -1732,6 +1738,7 @@
 				563C1D21677CDE5F94F909B8 /* PetSettingsView.swift */,
 				1FBFD15DB4FF368195848F2D /* PetSpriteView.swift */,
 				F9AA0CC105169C111D0883DE /* PiByokSettingsView.swift */,
+				BBE132D25BB5EF0649F2DC17 /* PiCapabilityFixtureUITestHarnessView.swift */,
 				00185D1EBB5518DF35218D6C /* PiCapabilityGates.swift */,
 				0BFD13DFBBDC17261EAD5E62 /* PiPContentView.swift */,
 				BD1ACB5BC8CBE4849EB34E73 /* PiPHostView.swift */,
@@ -2499,6 +2506,7 @@
 				319C2B181B9713B97F53A071 /* PetSettingsView.swift in Sources */,
 				7CEC143C214EE595AB7B4714 /* PetSpriteView.swift in Sources */,
 				5784179EF639B7A7BA683A33 /* PiByokSettingsView.swift in Sources */,
+				CD31A98C69C43EF135D4AA65 /* PiCapabilityFixtureUITestHarnessView.swift in Sources */,
 				EF781D13BE07551CFBD84C16 /* PiCapabilityGates.swift in Sources */,
 				20B6731F8F7444623D9FC9E4 /* PiPContentView.swift in Sources */,
 				1C6229580B4B8D7B530622D7 /* PiPHostView.swift in Sources */,
@@ -2699,6 +2707,7 @@
 				88D410DEA96DA18A8D8BD729 /* PetSettingsView.swift in Sources */,
 				2D55E0EA12B02EB7072FBCC0 /* PetSpriteView.swift in Sources */,
 				1690546C70153C5444B92A7A /* PiByokSettingsView.swift in Sources */,
+				E6D2D80957A4D5FB169C9F37 /* PiCapabilityFixtureUITestHarnessView.swift in Sources */,
 				F51FA17C22F37A387230DB37 /* PiCapabilityGates.swift in Sources */,
 				96BDDDF704BD88C70063E938 /* PiPContentView.swift in Sources */,
 				391DF4BEFE2B0940887D94FF /* PiPHostView.swift in Sources */,
@@ -2776,6 +2785,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7F7580E318B61556359A4EC1 /* LitterUITests.swift in Sources */,
+				2160D534A6E6C95FBB046671 /* PiCapabilityGatesUITests.swift in Sources */,
 				6EBD5C55806BE6A98F2F282D /* PiRetryTurnUITests.swift in Sources */,
 				05A1BF5FB8220D9D48C611D0 /* SnapshotHelper.swift in Sources */,
 			);

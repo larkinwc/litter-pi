@@ -59,6 +59,7 @@ struct InlineVoiceButton: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("voice.mic.button")
             .animation(.spring(response: 0.4, dampingFraction: 0.75), value: isActive)
             .animation(.spring(response: 0.4, dampingFraction: 0.75), value: phase)
         }

@@ -46,6 +46,7 @@ struct InlineHandoffView: View {
                     )
                 }
                 .frame(height: min(contentHeight, maxHeight))
+                .accessibilityIdentifier("voice.handoff.banner")
                 .onPreferenceChange(InlineHandoffContentHeightKey.self) { contentHeight = $0 }
                 .onChange(of: scrollSignature) { _, _ in
                     withAnimation(.easeOut(duration: 0.15)) {
@@ -63,6 +64,7 @@ struct InlineHandoffView: View {
                     .foregroundColor(.white.opacity(0.7))
             }
             .padding(.vertical, 4)
+            .accessibilityIdentifier("voice.handoff.banner")
         }
     }
 }

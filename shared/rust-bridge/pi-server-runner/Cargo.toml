@@ -9,6 +9,10 @@ description = "Headless host runner for exercising the in-process pi coding agen
 name = "pi-server-runner"
 path = "src/main.rs"
 
+[[test]]
+name = "capability_plans"
+path = "tests/capability_plans.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 codex-mobile-client = { path = "../codex-mobile-client" }
